@@ -3,6 +3,9 @@ const cors = require('cors');
 require('dotenv').config();
 
 const authRoutes = require('./routes/authRoutes');
+const menuRoutes = require('./routes/menuRoutes');
+const eventRoutes = require('./routes/eventRoutes');
+const bookRoutes = require('./routes/bookRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -17,6 +20,9 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/menus', menuRoutes);
+app.use('/api/events', eventRoutes);
+app.use('/api/books', bookRoutes);
 
 // ── 404 Handler ──────────────────────────────────────────────
 app.use((req, res) => {

@@ -8,7 +8,7 @@ const pool = require('../config/db');
  */
 const register = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, phone, password, role } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'Name, email, dan password wajib diisi.' });
@@ -30,13 +30,21 @@ const register = async (req, res) => {
     const userRole = role === 'admin' ? 'admin' : 'user';
 
     const [result] = await pool.execute(
-      'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
-      [name, email, hashedPassword, userRole]
+      'INSERT INTO users (name, email, phone, password, role) VALUES (?, ?, ?, ?, ?)',
+      [name, email, phone || null, hashedPassword, userRole]
+    );
+
+    // Generate token JWT
+    const token = jwt.sign(
+      { id: result.insertId, name, email, role: userRole },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
     );
 
     return res.status(201).json({
       message: 'Registrasi berhasil.',
-      user: { id: result.insertId, name, email, role: userRole },
+      token,
+      user: { id: result.insertId, name, email, phone: phone || null, role: userRole },
     });
   } catch (err) {
     console.error('[register]', err);

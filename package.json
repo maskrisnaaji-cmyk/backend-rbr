@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "db:init": "node seed.js && node init_db.js",
+    "prestart": "npm run db:init",
     "start": "node index.js",
+    "predev": "npm run db:init",
     "dev": "nodemon index.js",
     "seed": "node seed.js"
   },
@@ -12,11 +15,13 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@vercel/blob": "^2.8.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^2.5.0",
     "mysql2": "^3.24.6"
   },
   "devDependencies": {

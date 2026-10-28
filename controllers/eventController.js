@@ -4,7 +4,7 @@ const pool = require('../config/db');
 const getAllEvents = async (req, res) => {
   try {
     const { month, date } = req.query;
-    let query = 'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, category FROM events';
+    let query = 'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events';
     const params = [];
 
     if (date) {
@@ -30,7 +30,7 @@ const getEventById = async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await pool.execute(
-      'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, category FROM events WHERE id = ?',
+      'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events WHERE id = ?',
       [id]
     );
     if (rows.length === 0) {
@@ -46,7 +46,7 @@ const getEventById = async (req, res) => {
 // POST /api/events — Tambah event baru
 const createEvent = async (req, res) => {
   try {
-    const { title, tittle, date, time, location, price, quota, sold, status, image, category } = req.body;
+    const { title, tittle, date, time, location, price, quota, sold, status, image, banner_image, poster, category } = req.body;
     const eventTitle = title || tittle;
 
     if (!eventTitle) {
@@ -54,7 +54,7 @@ const createEvent = async (req, res) => {
     }
 
     const [result] = await pool.execute(
-      'INSERT INTO events (tittle, date, time, location, price, quota, sold, status, image, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO events (tittle, date, time, location, price, quota, sold, status, image, banner_image, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         eventTitle,
         date || '',
@@ -64,13 +64,14 @@ const createEvent = async (req, res) => {
         quota !== undefined ? Number(quota) : 50,
         sold !== undefined ? Number(sold) : 0,
         status || 'Aktif',
-        image || '',
+        image || banner_image || poster || '',
+        banner_image || poster || image || '',
         category || 'Budaya',
       ]
     );
 
     const [created] = await pool.execute(
-      'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, category FROM events WHERE id = ?',
+      'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events WHERE id = ?',
       [result.insertId]
     );
     res.status(201).json({ message: 'Event berhasil ditambahkan.', data: created[0] });
@@ -84,7 +85,7 @@ const createEvent = async (req, res) => {
 const updateEvent = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, tittle, date, time, location, price, quota, sold, status, image, category } = req.body;
+    const { title, tittle, date, time, location, price, quota, sold, status, image, banner_image, poster, category } = req.body;
     const eventTitle = title || tittle;
 
     const [existing] = await pool.execute('SELECT * FROM events WHERE id = ?', [id]);
@@ -94,7 +95,7 @@ const updateEvent = async (req, res) => {
 
     const current = existing[0];
     await pool.execute(
-      'UPDATE events SET tittle = ?, date = ?, time = ?, location = ?, price = ?, quota = ?, sold = ?, status = ?, image = ?, category = ? WHERE id = ?',
+      'UPDATE events SET tittle = ?, date = ?, time = ?, location = ?, price = ?, quota = ?, sold = ?, status = ?, image = ?, banner_image = ?, category = ? WHERE id = ?',
       [
         eventTitle !== undefined ? eventTitle : current.tittle,
         date !== undefined ? date : current.date,
@@ -104,14 +105,15 @@ const updateEvent = async (req, res) => {
         quota !== undefined ? Number(quota) : current.quota,
         sold !== undefined ? Number(sold) : current.sold,
         status !== undefined ? status : current.status,
-        image !== undefined ? image : current.image,
+        (image ?? banner_image ?? poster) !== undefined ? (image ?? banner_image ?? poster) : current.image,
+        (banner_image ?? poster ?? image) !== undefined ? (banner_image ?? poster ?? image) : (current.banner_image ?? current.image),
         category !== undefined ? category : current.category,
         id,
       ]
     );
 
     const [updated] = await pool.execute(
-      'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, category FROM events WHERE id = ?',
+      'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events WHERE id = ?',
       [id]
     );
     res.json({ message: 'Event berhasil diperbarui.', data: updated[0] });

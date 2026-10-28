@@ -33,12 +33,27 @@ async function initDb() {
 
   try {
     await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS image VARCHAR(255) NULL");
+    await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS banner_image VARCHAR(255) NULL");
     await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS category VARCHAR(50) NULL DEFAULT 'Budaya'");
   } catch (err) {
     console.log('Kolom events sudah ada atau tidak perlu diubah:', err.message);
   }
 
-  // 3. Pastikan tabel books lengkap
+  // 3. Tabel transaksi tiket untuk menyimpan bukti pembayaran dari upload cloud.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ticket_transactions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_id INT NULL,
+      customer_name VARCHAR(150) NULL,
+      customer_email VARCHAR(150) NULL,
+      amount INT NOT NULL DEFAULT 0,
+      status VARCHAR(50) NOT NULL DEFAULT 'Menunggu Pembayaran',
+      payment_proof VARCHAR(500) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // 4. Pastikan tabel books lengkap
   await pool.query(`
     CREATE TABLE IF NOT EXISTS books (
       id INT AUTO_INCREMENT PRIMARY KEY,

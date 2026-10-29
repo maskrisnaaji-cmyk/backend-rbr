@@ -30,6 +30,7 @@ async function seed() {
       phone       VARCHAR(20)   NULL,
       password    VARCHAR(255)  NOT NULL,
       role        ENUM('admin', 'user') NOT NULL DEFAULT 'user',
+      security_pin VARCHAR(50)  DEFAULT 'RBR2026',
       createdAt   TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);

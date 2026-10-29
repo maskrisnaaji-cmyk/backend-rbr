@@ -75,6 +75,13 @@ async function initDb() {
     console.log('Kolom books sudah ada atau tidak perlu diubah:', err.message);
   }
 
+  try {
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS security_pin VARCHAR(50) DEFAULT 'RBR2026'");
+    await pool.query("UPDATE users SET security_pin = 'RBR2026' WHERE security_pin IS NULL");
+  } catch (err) {
+    console.log('Kolom users security_pin sudah ada:', err.message);
+  }
+
   // 4. Seeding data awal jika masih kosong
   const [menuCount] = await pool.query('SELECT COUNT(*) as count FROM menus');
   if (menuCount[0].count === 0) {

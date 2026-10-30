@@ -100,15 +100,32 @@ async function initDb() {
   if (eventCount[0].count === 0) {
     console.log('🌱 Seeding initial events...');
     await pool.query(`
-      INSERT INTO events (tittle, date, time, location, price, quota, sold, status, image, category) VALUES
-      ('Napak Tanah Jilid II Book Club', '2026-09-28', '15:30 WIB', 'Ruang Komunal Lt. 2', 25000, 50, 42, 'Aktif', '/napak_tanah.jpeg', 'Lokakarya'),
-      ('Penampilan Seni Teater Pak Rungkad', '2026-09-29', '19:00 WIB', 'Panggung Utama Pendopo', 35000, 30, 30, 'Penuh', '/pak_rungkad.jpeg', 'Wicara Seni'),
-      ('Obrolan Budaya: Kearifan Lokal Jawa', '2026-10-08', '13:00 WIB', 'Ruang Komunal Lt. 1', 15000, 40, 32, 'Aktif', '', 'Diskusi'),
-      ('Pameran Batik Kontemporer Nusantara', '2026-10-09', '10:00 WIB', 'Galeri Utama', 20000, 50, 30, 'Aktif', '', 'Pameran'),
-      ('Workshop Keramik: Membentuk Tanah Liat', '2026-10-11', '09:00 WIB', 'Studio Kreatif', 45000, 20, 14, 'Aktif', '', 'Workshop'),
-      ('Malam Akustik & Puisi Nusantara', '2026-10-12', '19:00 WIB', 'Pendopo Utama', 30000, 50, 18, 'Aktif', '/rbr_frontt.jpg', 'Pertunjukan'),
-      ('Sabtu Budaya: Gotong Royong Seni', '2026-10-13', '10:00 WIB', 'Taman Budaya', 0, 50, 25, 'Aktif', '', 'Komunitas');
+      INSERT INTO events (tittle, date, time, location, price, quota, sold, status, image, banner_image, category) VALUES
+      ('Napak Tanah Jilid II Book Club', '2026-09-28', '15:30 WIB', 'Ruang Komunal Lt. 2', 25000, 50, 42, 'Aktif', '/napak_tanah.jpeg', '/napak_tanah.jpeg', 'Lokakarya'),
+      ('Penampilan Seni Teater Pak Rungkad', '2026-09-29', '19:00 WIB', 'Panggung Utama Pendopo', 35000, 30, 30, 'Penuh', '/pak_rungkad.jpeg', '/pak_rungkad.jpeg', 'Wicara Seni'),
+      ('Obrolan Budaya: Kearifan Lokal Jawa', '2026-10-08', '13:00 WIB', 'Ruang Komunal Lt. 1', 15000, 40, 32, 'Aktif', '/oktober_08_obrolan_budaya.jpg', '/oktober_08_obrolan_budaya.jpg', 'Diskusi'),
+      ('Pameran Batik Kontemporer Nusantara', '2026-10-09', '10:00 WIB', 'Galeri Utama', 20000, 50, 30, 'Aktif', '/oktober_09_pameran_batik.jpg', '/oktober_09_pameran_batik.jpg', 'Pameran'),
+      ('Workshop Keramik: Membentuk Tanah Liat', '2026-10-11', '09:00 WIB', 'Studio Kreatif', 45000, 20, 14, 'Aktif', '/oktober_11_workshop_keramik.jpg', '/oktober_11_workshop_keramik.jpg', 'Workshop'),
+      ('Malam Akustik & Puisi Nusantara', '2026-10-12', '19:00 WIB', 'Pendopo Utama', 30000, 50, 18, 'Aktif', '/oktober_12_malam_akustik.jpg', '/oktober_12_malam_akustik.jpg', 'Pertunjukan'),
+      ('Sabtu Budaya: Gotong Royong Seni', '2026-10-13', '10:00 WIB', 'Taman Budaya', 0, 50, 25, 'Aktif', '/oktober_13_sabtu_budaya.jpg', '/oktober_13_sabtu_budaya.jpg', 'Komunitas');
     `);
+  }
+
+  // Sinkronisasi otomatis gambar event dan menu
+  try {
+    await pool.query("UPDATE events SET image = '/napak_tanah.jpeg', banner_image = '/napak_tanah.jpeg' WHERE tittle LIKE '%Napak Tanah%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/pak_rungkad.jpeg', banner_image = '/pak_rungkad.jpeg' WHERE tittle LIKE '%Rungkad%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/oktober_08_obrolan_budaya.jpg', banner_image = '/oktober_08_obrolan_budaya.jpg' WHERE tittle LIKE '%Obrolan%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/oktober_09_pameran_batik.jpg', banner_image = '/oktober_09_pameran_batik.jpg' WHERE tittle LIKE '%Batik%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/oktober_11_workshop_keramik.jpg', banner_image = '/oktober_11_workshop_keramik.jpg' WHERE tittle LIKE '%Keramik%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/oktober_12_malam_akustik.jpg', banner_image = '/oktober_12_malam_akustik.jpg' WHERE tittle LIKE '%Akustik%' AND (banner_image IS NULL OR banner_image = '' OR image = '' OR image = '/rbr_frontt.jpg')");
+    await pool.query("UPDATE events SET image = '/oktober_13_sabtu_budaya.jpg', banner_image = '/oktober_13_sabtu_budaya.jpg' WHERE tittle LIKE '%Sabtu Budaya%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET banner_image = image WHERE (banner_image IS NULL OR banner_image = '') AND image IS NOT NULL AND image != ''");
+
+    await pool.query("UPDATE menus SET image = 'assets/images/wedang_uwuh.jpg' WHERE name LIKE '%Wedang%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE menus SET image = 'assets/images/pisang_goreng_keju.jpg' WHERE name LIKE '%Pisang%' AND (image IS NULL OR image = '')");
+  } catch (syncErr) {
+    console.log('Catatan sinkronisasi gambar:', syncErr.message);
   }
 
   const [bookCount] = await pool.query('SELECT COUNT(*) as count FROM books');

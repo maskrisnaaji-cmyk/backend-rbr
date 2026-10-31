@@ -140,6 +140,35 @@ async function initDb() {
     `);
   }
 
+  // 5. Tabel ai_insights — menyimpan riwayat query & respons AI chatbot
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_insights (
+      id            INT AUTO_INCREMENT PRIMARY KEY,
+      user_id       INT NULL,
+      module_type   VARCHAR(100) NOT NULL DEFAULT 'chatbot_budaya',
+      input_query   TEXT NOT NULL,
+      ai_response_json TEXT NOT NULL,
+      created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_ai_user_id (user_id),
+      INDEX idx_ai_module (module_type)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // 6. Tabel audit_logs — mencatat aktivitas sistem untuk keamanan & audit trail
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id               INT AUTO_INCREMENT PRIMARY KEY,
+      action_performed VARCHAR(100) NOT NULL,
+      endpoint_target  VARCHAR(255) NULL,
+      performed_by     VARCHAR(150) NULL,
+      ip_address       VARCHAR(60) NULL,
+      meta_info        TEXT NULL,
+      created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_audit_action (action_performed),
+      INDEX idx_audit_performed_by (performed_by)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   console.log('✅ Inisialisasi DB selesai!');
   process.exit(0);
 }

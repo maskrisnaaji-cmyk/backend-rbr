@@ -10,8 +10,8 @@ const validateUploadTarget = (req) => {
   const entityId = req.body.entityId || req.body.id;
 
   if (!entity && !entityId) return { entity: null, entityId: null };
-  if (!['event', 'ticket'].includes(entity)) {
-    const error = new Error('Target upload harus berupa event atau ticket.');
+  if (!['event', 'ticket', 'menu'].includes(entity)) {
+    const error = new Error('Target upload harus berupa event, menu, atau ticket.');
     error.statusCode = 400;
     throw error;
   }
@@ -34,6 +34,19 @@ const persistUploadedUrl = async ({ entity, entityId, url }) => {
     );
     if (result.affectedRows === 0) {
       const error = new Error('Event tidak ditemukan.');
+      error.statusCode = 404;
+      throw error;
+    }
+    return;
+  }
+
+  if (entity === 'menu') {
+    const [result] = await pool.execute(
+      'UPDATE menus SET image = ? WHERE id = ?',
+      [url, entityId]
+    );
+    if (result.affectedRows === 0) {
+      const error = new Error('Menu tidak ditemukan.');
       error.statusCode = 404;
       throw error;
     }

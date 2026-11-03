@@ -154,6 +154,14 @@ async function initDb() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  try {
+    await pool.query("ALTER TABLE ai_insights ADD COLUMN IF NOT EXISTS input_query TEXT NULL");
+    await pool.query("ALTER TABLE ai_insights ADD COLUMN IF NOT EXISTS ai_response_json LONGTEXT NULL");
+    await pool.query("ALTER TABLE ai_insights ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+  } catch (err) {
+    console.log('Kolom ai_insights sudah ada atau tidak perlu diubah:', err.message);
+  }
+
   // 6. Tabel audit_logs — mencatat aktivitas sistem untuk keamanan & audit trail
   await pool.query(`
     CREATE TABLE IF NOT EXISTS audit_logs (
@@ -168,6 +176,15 @@ async function initDb() {
       INDEX idx_audit_performed_by (performed_by)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  try {
+    await pool.query("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS performed_by VARCHAR(150) NULL");
+    await pool.query("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(60) NULL");
+    await pool.query("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS meta_info TEXT NULL");
+    await pool.query("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+  } catch (err) {
+    console.log('Kolom audit_logs sudah ada atau tidak perlu diubah:', err.message);
+  }
 
   console.log('✅ Inisialisasi DB selesai!');
   process.exit(0);

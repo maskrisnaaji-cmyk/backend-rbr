@@ -49,9 +49,68 @@ async function initDb() {
       amount INT NOT NULL DEFAULT 0,
       status VARCHAR(50) NOT NULL DEFAULT 'Menunggu Pembayaran',
       payment_proof VARCHAR(500) NULL,
+      order_id VARCHAR(100) NULL,
+      snap_token VARCHAR(255) NULL,
+      redirect_url VARCHAR(500) NULL,
+      payment_method VARCHAR(50) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  try {
+    await pool.query("ALTER TABLE ticket_transactions ADD COLUMN IF NOT EXISTS order_id VARCHAR(100) NULL");
+    await pool.query("ALTER TABLE ticket_transactions ADD COLUMN IF NOT EXISTS snap_token VARCHAR(255) NULL");
+    await pool.query("ALTER TABLE ticket_transactions ADD COLUMN IF NOT EXISTS redirect_url VARCHAR(500) NULL");
+    await pool.query("ALTER TABLE ticket_transactions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
+  } catch (ttErr) {
+    console.log('Kolom ticket_transactions sudah ada:', ttErr.message);
+  }
+
+  // 3b. Tabel transactions untuk riwayat pembayaran Midtrans (Kedai Kopi & Tiket)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS transactions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      order_id VARCHAR(100) NULL,
+      order_type VARCHAR(50) DEFAULT 'kedai',
+      customer_name VARCHAR(150) NULL,
+      customer_email VARCHAR(150) NULL,
+      customer_phone VARCHAR(50) NULL,
+      gross_amount INT NOT NULL DEFAULT 0,
+      payment_method VARCHAR(50) NULL,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      snap_token VARCHAR(255) NULL,
+      redirect_url VARCHAR(500) NULL,
+      payment_response TEXT NULL,
+      items_json TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  try {
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS order_id VARCHAR(100) NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS order_type VARCHAR(50) DEFAULT 'kedai'");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS customer_name VARCHAR(150) NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS customer_email VARCHAR(150) NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS customer_phone VARCHAR(50) NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS gross_amount INT NOT NULL DEFAULT 0");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payment_type VARCHAR(50) NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS status VARCHAR(50) NOT NULL DEFAULT 'pending'");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transaction_status VARCHAR(50) NOT NULL DEFAULT 'pending'");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS va_number VARCHAR(100) NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS bank VARCHAR(50) NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS qr_string TEXT NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS qr_url TEXT NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS snap_token VARCHAR(255) NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS redirect_url VARCHAR(500) NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payment_response TEXT NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS items_json TEXT NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+  } catch (tErr) {
+    console.log('Kolom transactions sudah ada:', tErr.message);
+  }
 
   // 4. Pastikan tabel books lengkap
   await pool.query(`

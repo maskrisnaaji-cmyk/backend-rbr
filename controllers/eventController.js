@@ -4,7 +4,7 @@ const pool = require('../config/db');
 const getAllEvents = async (req, res) => {
   try {
     const { month, date } = req.query;
-    let query = 'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, category FROM events';
+    let query = 'SELECT * FROM events';
     const params = [];
 
     if (date) {
@@ -18,7 +18,12 @@ const getAllEvents = async (req, res) => {
     query += ' ORDER BY date ASC, id ASC';
 
     const [rows] = await pool.query(query, params);
-    res.json(rows);
+    const normalized = rows.map((r) => ({
+      ...r,
+      title: r.title || r.tittle || '',
+      tittle: r.tittle || r.title || '',
+    }));
+    res.json(normalized);
   } catch (err) {
     console.error('[getAllEvents]', err);
     res.status(500).json({ message: 'Gagal mengambil data event/agenda.' });
@@ -29,14 +34,14 @@ const getAllEvents = async (req, res) => {
 const getEventById = async (req, res) => {
   try {
     const { id } = req.params;
-    const [rows] = await pool.execute(
-      'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, category FROM events WHERE id = ?',
-      [id]
-    );
+    const [rows] = await pool.execute('SELECT * FROM events WHERE id = ?', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Event tidak ditemukan.' });
     }
-    res.json(rows[0]);
+    const event = rows[0];
+    event.title = event.title || event.tittle || '';
+    event.tittle = event.tittle || event.title || '';
+    res.json(event);
   } catch (err) {
     console.error('[getEventById]', err);
     res.status(500).json({ message: 'Gagal mengambil detail event.' });

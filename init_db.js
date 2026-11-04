@@ -51,6 +51,9 @@ async function initDb() {
   `);
 
   try {
+    await pool.query("ALTER TABLE books ADD COLUMN IF NOT EXISTS category VARCHAR(100) NULL DEFAULT 'Koleksi Sastra'");
+    await pool.query("ALTER TABLE books ADD COLUMN IF NOT EXISTS rack_location VARCHAR(50) NULL DEFAULT 'RAK 1A'");
+    await pool.query("ALTER TABLE books ADD COLUMN IF NOT EXISTS status VARCHAR(50) NULL DEFAULT 'Tersedia'");
     await pool.query("ALTER TABLE books ADD COLUMN IF NOT EXISTS code VARCHAR(50) NULL");
     await pool.query("ALTER TABLE books ADD COLUMN IF NOT EXISTS borrower VARCHAR(100) NULL DEFAULT '-'");
     await pool.query("ALTER TABLE books ADD COLUMN IF NOT EXISTS cover_image VARCHAR(255) NULL");
@@ -60,7 +63,39 @@ async function initDb() {
     console.log('Kolom books sudah ada atau tidak perlu diubah:', err.message);
   }
 
-  // 4. Seeding data awal jika masih kosong
+  // 4. Pastikan tabel orders ada untuk tracking pesanan kedai
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id VARCHAR(50) PRIMARY KEY,
+      table_number VARCHAR(50) NOT NULL,
+      items TEXT NOT NULL,
+      total VARCHAR(50) NOT NULL,
+      status VARCHAR(50) NOT NULL DEFAULT 'menunggu',
+      time VARCHAR(50) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  // Buat view alias SQL jika ada query yang menggunakan nama tabel alternatif
+  try {
+    await pool.query('CREATE OR REPLACE VIEW menu_kedai AS SELECT * FROM menus');
+    await pool.query('CREATE OR REPLACE VIEW agenda AS SELECT * FROM events');
+  } catch (err) {
+    console.log('Catatan view alias:', err.message);
+  }
+
+  // 5. Seeding data awal jika masih kosong
+  const [orderCount] = await pool.query('SELECT COUNT(*) as count FROM orders');
+  if (orderCount[0].count === 0) {
+    console.log('🌱 Seeding initial orders...');
+    await pool.query(`
+      INSERT INTO orders (id, table_number, items, total, status, time) VALUES
+      ('RBR-1042', 'Meja 04', '1x Kopi Susu Creamy Gula Aren, 1x Americano Origin, 1x Pisang Goreng', 'Rp 65.000', 'disiapkan', '10 menit lalu'),
+      ('RBR-1043', 'Meja 09', '2x Wedang Uwuh Rempah Khas, 1x Jadah Bakar Serundeng Gurih', 'Rp 45.000', 'menunggu', '5 menit lalu'),
+      ('RBR-1041', 'Meja 01', '1x Single Origin V60 Flores Bajawa, 1x Cirebon Rujak', 'Rp 52.000', 'selesai', '25 menit lalu'),
+      ('RBR-1040', 'Meja 03', '2x Espresso Double Shot, 2x Croissant Butter', 'Rp 78.000', 'selesai', '40 menit lalu');
+    `);
+  }
+
   const [menuCount] = await pool.query('SELECT COUNT(*) as count FROM menus');
   if (menuCount[0].count === 0) {
     console.log('🌱 Seeding initial menus...');

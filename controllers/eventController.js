@@ -4,7 +4,7 @@ const pool = require('../config/db');
 const getAllEvents = async (req, res) => {
   try {
     const { month, date } = req.query;
-    let query = 'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events';
+    let query = 'SELECT id, title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events';
     const params = [];
 
     if (date) {
@@ -20,8 +20,8 @@ const getAllEvents = async (req, res) => {
     const [rows] = await pool.query(query, params);
     const normalized = rows.map((r) => ({
       ...r,
-      title: r.title || r.tittle || '',
-      tittle: r.tittle || r.title || '',
+      title: r.title || '',
+      tittle: r.title || '', // Alias kompatibilitas bila masih ada pemanggilan properti lama
     }));
     res.json(normalized);
   } catch (err) {
@@ -35,15 +35,15 @@ const getEventById = async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await pool.execute(
-      'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events WHERE id = ?',
+      'SELECT id, title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events WHERE id = ?',
       [id]
     );
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Event tidak ditemukan.' });
     }
     const event = rows[0];
-    event.title = event.title || event.tittle || '';
-    event.tittle = event.tittle || event.title || '';
+    event.title = event.title || '';
+    event.tittle = event.title || ''; // Alias kompatibilitas
     res.json(event);
   } catch (err) {
     console.error('[getEventById]', err);
@@ -62,7 +62,7 @@ const createEvent = async (req, res) => {
     }
 
     const [result] = await pool.execute(
-      'INSERT INTO events (tittle, date, time, location, price, quota, sold, status, image, banner_image, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO events (title, date, time, location, price, quota, sold, status, image, banner_image, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         eventTitle,
         date || '',
@@ -79,10 +79,15 @@ const createEvent = async (req, res) => {
     );
 
     const [created] = await pool.execute(
-      'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events WHERE id = ?',
+      'SELECT id, title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events WHERE id = ?',
       [result.insertId]
     );
-    res.status(201).json({ message: 'Event berhasil ditambahkan.', data: created[0] });
+    const createdEvent = created[0];
+    if (createdEvent) {
+      createdEvent.title = createdEvent.title || '';
+      createdEvent.tittle = createdEvent.title || '';
+    }
+    res.status(201).json({ message: 'Event berhasil ditambahkan.', data: createdEvent });
   } catch (err) {
     console.error('[createEvent]', err);
     res.status(500).json({ message: 'Gagal menambahkan event.' });
@@ -103,9 +108,9 @@ const updateEvent = async (req, res) => {
 
     const current = existing[0];
     await pool.execute(
-      'UPDATE events SET tittle = ?, date = ?, time = ?, location = ?, price = ?, quota = ?, sold = ?, status = ?, image = ?, banner_image = ?, category = ? WHERE id = ?',
+      'UPDATE events SET title = ?, date = ?, time = ?, location = ?, price = ?, quota = ?, sold = ?, status = ?, image = ?, banner_image = ?, category = ? WHERE id = ?',
       [
-        eventTitle !== undefined ? eventTitle : current.tittle,
+        eventTitle !== undefined ? eventTitle : current.title,
         date !== undefined ? date : current.date,
         time !== undefined ? time : current.time,
         location !== undefined ? location : current.location,
@@ -121,10 +126,15 @@ const updateEvent = async (req, res) => {
     );
 
     const [updated] = await pool.execute(
-      'SELECT id, tittle, tittle AS title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events WHERE id = ?',
+      'SELECT id, title, date, time, location, price, quota, sold, status, image, banner_image, category FROM events WHERE id = ?',
       [id]
     );
-    res.json({ message: 'Event berhasil diperbarui.', data: updated[0] });
+    const updatedEvent = updated[0];
+    if (updatedEvent) {
+      updatedEvent.title = updatedEvent.title || '';
+      updatedEvent.tittle = updatedEvent.title || '';
+    }
+    res.json({ message: 'Event berhasil diperbarui.', data: updatedEvent });
   } catch (err) {
     console.error('[updateEvent]', err);
     res.status(500).json({ message: 'Gagal memperbarui event.' });

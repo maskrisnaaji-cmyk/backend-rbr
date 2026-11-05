@@ -20,7 +20,7 @@ async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS events (
       id INT AUTO_INCREMENT PRIMARY KEY,
-      tittle VARCHAR(150) NOT NULL,
+      title VARCHAR(150) NOT NULL,
       date VARCHAR(100) NOT NULL,
       time VARCHAR(50) NOT NULL,
       location VARCHAR(50) NOT NULL,
@@ -194,7 +194,7 @@ async function initDb() {
   if (eventCount[0].count === 0) {
     console.log('🌱 Seeding initial events...');
     await pool.query(`
-      INSERT INTO events (tittle, date, time, location, price, quota, sold, status, image, banner_image, category) VALUES
+      INSERT INTO events (title, date, time, location, price, quota, sold, status, image, banner_image, category) VALUES
       ('Napak Tanah Jilid II Book Club', '2026-09-28', '15:30 WIB', 'Ruang Komunal Lt. 2', 25000, 50, 42, 'Aktif', '/napak_tanah.jpeg', '/napak_tanah.jpeg', 'Lokakarya'),
       ('Penampilan Seni Teater Pak Rungkad', '2026-09-29', '19:00 WIB', 'Panggung Utama Pendopo', 35000, 30, 30, 'Penuh', '/pak_rungkad.jpeg', '/pak_rungkad.jpeg', 'Wicara Seni'),
       ('Obrolan Budaya: Kearifan Lokal Jawa', '2026-10-08', '13:00 WIB', 'Ruang Komunal Lt. 1', 15000, 40, 32, 'Aktif', '/oktober_08_obrolan_budaya.jpg', '/oktober_08_obrolan_budaya.jpg', 'Diskusi'),
@@ -207,13 +207,13 @@ async function initDb() {
 
   // Sinkronisasi otomatis gambar event dan menu
   try {
-    await pool.query("UPDATE events SET image = '/napak_tanah.jpeg', banner_image = '/napak_tanah.jpeg' WHERE tittle LIKE '%Napak Tanah%' AND (image IS NULL OR image = '')");
-    await pool.query("UPDATE events SET image = '/pak_rungkad.jpeg', banner_image = '/pak_rungkad.jpeg' WHERE tittle LIKE '%Rungkad%' AND (image IS NULL OR image = '')");
-    await pool.query("UPDATE events SET image = '/oktober_08_obrolan_budaya.jpg', banner_image = '/oktober_08_obrolan_budaya.jpg' WHERE tittle LIKE '%Obrolan%' AND (image IS NULL OR image = '')");
-    await pool.query("UPDATE events SET image = '/oktober_09_pameran_batik.jpg', banner_image = '/oktober_09_pameran_batik.jpg' WHERE tittle LIKE '%Batik%' AND (image IS NULL OR image = '')");
-    await pool.query("UPDATE events SET image = '/oktober_11_workshop_keramik.jpg', banner_image = '/oktober_11_workshop_keramik.jpg' WHERE tittle LIKE '%Keramik%' AND (image IS NULL OR image = '')");
-    await pool.query("UPDATE events SET image = '/oktober_12_malam_akustik.jpg', banner_image = '/oktober_12_malam_akustik.jpg' WHERE tittle LIKE '%Akustik%' AND (banner_image IS NULL OR banner_image = '' OR image = '' OR image = '/rbr_frontt.jpg')");
-    await pool.query("UPDATE events SET image = '/oktober_13_sabtu_budaya.jpg', banner_image = '/oktober_13_sabtu_budaya.jpg' WHERE tittle LIKE '%Sabtu Budaya%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/napak_tanah.jpeg', banner_image = '/napak_tanah.jpeg' WHERE title LIKE '%Napak Tanah%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/pak_rungkad.jpeg', banner_image = '/pak_rungkad.jpeg' WHERE title LIKE '%Rungkad%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/oktober_08_obrolan_budaya.jpg', banner_image = '/oktober_08_obrolan_budaya.jpg' WHERE title LIKE '%Obrolan%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/oktober_09_pameran_batik.jpg', banner_image = '/oktober_09_pameran_batik.jpg' WHERE title LIKE '%Batik%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/oktober_11_workshop_keramik.jpg', banner_image = '/oktober_11_workshop_keramik.jpg' WHERE title LIKE '%Keramik%' AND (image IS NULL OR image = '')");
+    await pool.query("UPDATE events SET image = '/oktober_12_malam_akustik.jpg', banner_image = '/oktober_12_malam_akustik.jpg' WHERE title LIKE '%Akustik%' AND (banner_image IS NULL OR banner_image = '' OR image = '' OR image = '/rbr_frontt.jpg')");
+    await pool.query("UPDATE events SET image = '/oktober_13_sabtu_budaya.jpg', banner_image = '/oktober_13_sabtu_budaya.jpg' WHERE title LIKE '%Sabtu Budaya%' AND (image IS NULL OR image = '')");
     await pool.query("UPDATE events SET banner_image = image WHERE (banner_image IS NULL OR banner_image = '') AND image IS NOT NULL AND image != ''");
 
     await pool.query("UPDATE menus SET image = 'assets/images/wedang_uwuh.jpg' WHERE name LIKE '%Wedang%' AND (image IS NULL OR image = '')");

@@ -7,6 +7,9 @@ const menuRoutes = require('./routes/menuRoutes');
 const eventRoutes = require('./routes/eventRoutes');
 const bookRoutes = require('./routes/bookRoutes');
 const searchRoutes = require('./routes/searchRoutes');
+const uploadRoute = require('./routes/uploadRoute');
+const aiRoutes    = require('./routes/aiRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -25,6 +28,9 @@ app.use('/api/menus', menuRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/books', bookRoutes);
 app.use('/api/search', searchRoutes);
+app.use('/api/upload', uploadRoute);
+app.use('/api/ai',     aiRoutes);
+app.use('/api/payment', paymentRoutes);
 
 // ── 404 Handler ──────────────────────────────────────────────
 app.use((req, res) => {

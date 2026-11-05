@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "db:init": "node seed.js && node init_db.js",
+    "db:init": "node init_db.js && node seed.js",
     "prestart": "npm run db:init",
     "start": "node index.js",
     "predev": "npm run db:init",

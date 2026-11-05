@@ -17,6 +17,7 @@ async function initDb() {
   `);
 
   // 2. Pastikan tabel events lengkap
+  await pool.query(`DROP TABLE IF EXISTS events;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS events (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -27,7 +28,10 @@ async function initDb() {
       price INT(10) NOT NULL DEFAULT 0,
       quota INT(11) NOT NULL DEFAULT 50,
       sold INT(11) NOT NULL DEFAULT 0,
-      status VARCHAR(50) NOT NULL DEFAULT 'Aktif'
+      status VARCHAR(50) NOT NULL DEFAULT 'Aktif',
+      image VARCHAR(255) NULL,
+      banner_image VARCHAR(255) NULL,
+      category VARCHAR(50) NULL DEFAULT 'Budaya'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 

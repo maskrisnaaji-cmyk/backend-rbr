@@ -10,22 +10,32 @@ const validateUploadTarget = (req) => {
   const entityId = req.body.entityId || req.body.id;
 
   if (!entity && !entityId) return { entity: null, entityId: null };
-  if (!['event', 'ticket', 'menu'].includes(entity)) {
-    const error = new Error('Target upload harus berupa event, menu, atau ticket.');
+  if (!['event', 'ticket', 'menu', 'book'].includes(entity)) {
+    const error = new Error('Target upload harus berupa event, menu, ticket, atau book.');
     error.statusCode = 400;
     throw error;
   }
-  if (!entityId || !/^\d+$/.test(String(entityId))) {
+  if (entity !== 'book' && (!entityId || !/^\d+$/.test(String(entityId)))) {
     const error = new Error('entityId wajib berupa ID numerik.');
     error.statusCode = 400;
     throw error;
   }
 
-  return { entity, entityId: Number(entityId) };
+  return { entity, entityId: entity === 'book' ? String(entityId || '') : Number(entityId) };
 };
 
 const persistUploadedUrl = async ({ entity, entityId, url }) => {
   if (!entity) return;
+
+  if (entity === 'book') {
+    if (entityId) {
+      await pool.execute(
+        'UPDATE books SET cover_image = ? WHERE id = ? OR code = ?',
+        [url, entityId, entityId]
+      ).catch(() => {});
+    }
+    return;
+  }
 
   if (entity === 'event') {
     const [result] = await pool.execute(

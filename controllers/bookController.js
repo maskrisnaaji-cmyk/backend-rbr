@@ -25,7 +25,13 @@ const getAllBooks = async (req, res) => {
     query += ' ORDER BY id ASC';
 
     const [rows] = await pool.query(query, params);
-    res.json(rows);
+    const normalized = rows.map((b) => ({
+      ...b,
+      cover_image: b.cover_image || b.image || '',
+      image: b.cover_image || b.image || '',
+      imageUrl: b.cover_image || b.image || '',
+    }));
+    res.json(normalized);
   } catch (err) {
     console.error('[getAllBooks]', err);
     res.status(500).json({ message: 'Gagal mengambil data buku.' });
@@ -40,7 +46,14 @@ const getBookById = async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Buku tidak ditemukan.' });
     }
-    res.json(rows[0]);
+    const b = rows[0];
+    const normalized = {
+      ...b,
+      cover_image: b.cover_image || b.image || '',
+      image: b.cover_image || b.image || '',
+      imageUrl: b.cover_image || b.image || '',
+    };
+    res.json(normalized);
   } catch (err) {
     console.error('[getBookById]', err);
     res.status(500).json({ message: 'Gagal mengambil detail buku.' });
@@ -50,7 +63,7 @@ const getBookById = async (req, res) => {
 // POST /api/books — Tambah buku baru
 const createBook = async (req, res) => {
   try {
-    const { code, title, author, category, rack_location, shelfLocation, status, borrower, cover_image, coverImage, synopsis, year } = req.body;
+    const { code, title, author, category, rack_location, shelfLocation, status, borrower, cover_image, coverImage, image, imageUrl, synopsis, year } = req.body;
 
     const bookTitle = title;
     const bookCode = code || `NSS-${Date.now().toString().slice(-4)}`;
@@ -59,7 +72,7 @@ const createBook = async (req, res) => {
     const bookRack = rack_location || shelfLocation || 'RAK 1A';
     const bookStatus = status || 'Tersedia';
     const bookBorrower = borrower || '-';
-    const bookCover = cover_image || coverImage || '';
+    const bookCover = cover_image || coverImage || image || imageUrl || '';
     const bookSynopsis = synopsis || '';
     const bookYear = year || '2024';
 
@@ -84,7 +97,13 @@ const createBook = async (req, res) => {
     );
 
     const [created] = await pool.execute('SELECT * FROM books WHERE id = ?', [result.insertId]);
-    res.status(201).json({ message: 'Buku berhasil ditambahkan.', data: created[0] });
+    const normalized = {
+      ...created[0],
+      cover_image: created[0].cover_image || created[0].image || '',
+      image: created[0].cover_image || created[0].image || '',
+      imageUrl: created[0].cover_image || created[0].image || '',
+    };
+    res.status(201).json({ message: 'Buku berhasil ditambahkan.', data: normalized });
   } catch (err) {
     console.error('[createBook]', err);
     res.status(500).json({ message: 'Gagal menambahkan buku.' });
@@ -95,7 +114,7 @@ const createBook = async (req, res) => {
 const updateBook = async (req, res) => {
   try {
     const { id } = req.params;
-    const { code, title, author, category, rack_location, shelfLocation, status, borrower, cover_image, coverImage, synopsis, year } = req.body;
+    const { code, title, author, category, rack_location, shelfLocation, status, borrower, cover_image, coverImage, image, imageUrl, synopsis, year } = req.body;
 
     const [existing] = await pool.execute('SELECT * FROM books WHERE id = ? OR code = ?', [id, id]);
     if (existing.length === 0) {
@@ -104,6 +123,7 @@ const updateBook = async (req, res) => {
 
     const current = existing[0];
     const targetId = current.id;
+    const coverValue = cover_image !== undefined ? cover_image : (coverImage !== undefined ? coverImage : (image !== undefined ? image : (imageUrl !== undefined ? imageUrl : current.cover_image)));
 
     await pool.execute(
       'UPDATE books SET code = ?, title = ?, author = ?, category = ?, rack_location = ?, status = ?, borrower = ?, cover_image = ?, synopsis = ?, year = ? WHERE id = ?',
@@ -115,7 +135,7 @@ const updateBook = async (req, res) => {
         (rack_location || shelfLocation) !== undefined ? (rack_location || shelfLocation) : current.rack_location,
         status !== undefined ? status : current.status,
         borrower !== undefined ? borrower : current.borrower,
-        (cover_image || coverImage) !== undefined ? (cover_image || coverImage) : current.cover_image,
+        coverValue,
         synopsis !== undefined ? synopsis : current.synopsis,
         year !== undefined ? year : current.year,
         targetId,
@@ -123,7 +143,13 @@ const updateBook = async (req, res) => {
     );
 
     const [updated] = await pool.execute('SELECT * FROM books WHERE id = ?', [targetId]);
-    res.json({ message: 'Buku berhasil diperbarui.', data: updated[0] });
+    const normalized = {
+      ...updated[0],
+      cover_image: updated[0].cover_image || updated[0].image || '',
+      image: updated[0].cover_image || updated[0].image || '',
+      imageUrl: updated[0].cover_image || updated[0].image || '',
+    };
+    res.json({ message: 'Buku berhasil diperbarui.', data: normalized });
   } catch (err) {
     console.error('[updateBook]', err);
     res.status(500).json({ message: 'Gagal memperbarui buku.' });

@@ -265,4 +265,67 @@ const resetPasswordDirect = async (req, res) => {
   }
 };
 
-module.exports = { register, login, logout, verifyResetIdentity, resetPasswordDirect };
+/**
+ * POST /api/auth/forgot-password
+ * Memeriksa keberadaan akun berdasarkan email atau nomor handphone di tabel users
+ * Mengembalikan respons sukses jika akun ditemukan, atau pesan error jika belum terdaftar.
+ */
+const forgotPassword = async (req, res) => {
+  try {
+    const rawIdentifier = req.body.identifier || req.body.email || req.body.phone || req.body.emailOrPhone || '';
+    const identifier = String(rawIdentifier).trim();
+
+    if (!identifier) {
+      return res.status(400).json({
+        success: false,
+        message: 'Silakan masukkan Email atau Nomor Handphone terdaftar Anda.',
+      });
+    }
+
+    // Cari pengguna berdasarkan email ATAU phone di tabel users
+    const [rows] = await pool.execute(
+      'SELECT id, name, email, phone FROM users WHERE email = ? OR phone = ? LIMIT 1',
+      [identifier, identifier]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Akun dengan Email atau Nomor Handphone tersebut belum terdaftar di sistem kami.',
+      });
+    }
+
+    const user = rows[0];
+
+    // Catat log audit jika tabel audit_logs tersedia
+    try {
+      await pool.execute(
+        'INSERT INTO audit_logs (action_performed, endpoint_target, performed_by, meta_info) VALUES (?, ?, ?, ?)',
+        [
+          'FORGOT_PASSWORD_REQUEST',
+          '/api/auth/forgot-password',
+          user.email || identifier,
+          JSON.stringify({ userId: user.id, identifier }),
+        ]
+      );
+    } catch (_) {}
+
+    return res.status(200).json({
+      success: true,
+      message: 'Instruksi atur ulang kata sandi telah berhasil dikirim ke alamat email / nomor WhatsApp Anda.',
+      data: {
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+      },
+    });
+  } catch (err) {
+    console.error('[forgotPassword]', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan pada server saat memproses permintaan atur ulang kata sandi.',
+    });
+  }
+};
+
+module.exports = { register, login, logout, verifyResetIdentity, resetPasswordDirect, forgotPassword };

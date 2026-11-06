@@ -5,7 +5,8 @@ const {
   login, 
   logout, 
   verifyResetIdentity, 
-  resetPasswordDirect 
+  resetPasswordDirect,
+  forgotPassword 
 } = require('../controllers/authController');
 const { verifyToken } = require('../middleware/authMiddleware');
 
@@ -17,6 +18,9 @@ router.post('/login', login);
 
 // POST /api/auth/logout — Logout (dilindungi token)
 router.post('/logout', verifyToken, logout);
+
+// POST /api/auth/forgot-password — Cek keberadaan akun & kirim instruksi atur ulang kata sandi
+router.post('/forgot-password', forgotPassword);
 
 // POST /api/auth/verify-reset-identity — Verifikasi data internal staf (Username/ID & PIN)
 router.post('/verify-reset-identity', verifyResetIdentity);

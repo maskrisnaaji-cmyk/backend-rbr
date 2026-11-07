@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
@@ -328,4 +329,122 @@ const forgotPassword = async (req, res) => {
   }
 };
 
-module.exports = { register, login, logout, verifyResetIdentity, resetPasswordDirect, forgotPassword };
+/**
+ * POST /api/auth/google-login
+ * Login & sinkronisasi pengguna akun Google
+ * - Cek apakah email Google terdaftar di tabel users
+ * - Jika belum terdaftar, lakukan pendaftaran otomatis (auto-register)
+ * - Kembalikan token JWT & data profil (termasuk nama akun untuk inisial avatar dinamis)
+ */
+const googleLogin = async (req, res) => {
+  try {
+    const { email, name, photoUrl, googleId } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email akun Google wajib disertakan.',
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const fallbackName = cleanEmail.split('@')[0];
+    const candidateName = (name && name.trim().length > 0) ? name.trim() : fallbackName;
+
+    // 1. Cek keberadaan user berdasarkan email
+    const [rows] = await pool.execute(
+      'SELECT id, name, email, phone, role FROM users WHERE email = ?',
+      [cleanEmail]
+    );
+
+    let user;
+    let isNewUser = false;
+
+    if (rows.length > 0) {
+      user = rows[0];
+
+      // Jika nama pengguna sebelumnya generik atau kosong, perbarui dengan nama display Google jika tersedia
+      if ((!user.name || user.name.trim().length === 0 || user.name === fallbackName) && candidateName !== fallbackName) {
+        try {
+          await pool.execute('UPDATE users SET name = ? WHERE id = ?', [candidateName, user.id]);
+          user.name = candidateName;
+        } catch (_) {}
+      }
+    } else {
+      isNewUser = true;
+      // Auto-register pengguna baru dengan password hash acak aman
+      const randomSecret = crypto.randomBytes(24).toString('hex');
+      const hashedPassword = await bcrypt.hash(randomSecret, 10);
+      const userRole = 'user';
+
+      const [insertResult] = await pool.execute(
+        'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
+        [candidateName, cleanEmail, hashedPassword, userRole]
+      );
+
+      user = {
+        id: insertResult.insertId,
+        name: candidateName,
+        email: cleanEmail,
+        phone: null,
+        role: userRole,
+      };
+    }
+
+    // 2. Buat token JWT
+    const token = jwt.sign(
+      { id: user.id, name: user.name, email: user.email, role: user.role },
+      process.env.JWT_SECRET || 'rumah_budaya_ratna_secret_2026',
+      { expiresIn: '24h' }
+    );
+
+    // 3. Catat aktivitas ke tabel audit_logs
+    try {
+      await pool.execute(
+        'INSERT INTO audit_logs (action_performed, endpoint_target, performed_by, meta_info) VALUES (?, ?, ?, ?)',
+        [
+          isNewUser ? 'GOOGLE_AUTO_REGISTER' : 'GOOGLE_LOGIN',
+          '/api/auth/google-login',
+          user.email,
+          JSON.stringify({
+            userId: user.id,
+            name: user.name,
+            googleId: googleId || null,
+            isNewUser,
+          }),
+        ]
+      );
+    } catch (_) {}
+
+    return res.status(200).json({
+      success: true,
+      message: isNewUser ? 'Akun Google berhasil didaftarkan dan masuk.' : 'Login Google berhasil.',
+      token,
+      isNewUser,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone || null,
+        role: user.role || 'user',
+        photoUrl: photoUrl || null,
+      },
+    });
+  } catch (err) {
+    console.error('[googleLogin]', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan pada server saat memproses login Google.',
+    });
+  }
+};
+
+module.exports = {
+  register,
+  login,
+  logout,
+  verifyResetIdentity,
+  resetPasswordDirect,
+  forgotPassword,
+  googleLogin,
+};

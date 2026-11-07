@@ -6,7 +6,8 @@ const {
   logout, 
   verifyResetIdentity, 
   resetPasswordDirect,
-  forgotPassword 
+  forgotPassword,
+  googleLogin,
 } = require('../controllers/authController');
 const { verifyToken } = require('../middleware/authMiddleware');
 
@@ -15,6 +16,9 @@ router.post('/register', register);
 
 // POST /api/auth/login — Login & dapatkan token JWT
 router.post('/login', login);
+
+// POST /api/auth/google-login — Login atau auto-register dengan Google
+router.post('/google-login', googleLogin);
 
 // POST /api/auth/logout — Logout (dilindungi token)
 router.post('/logout', verifyToken, logout);

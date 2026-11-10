@@ -37,7 +37,8 @@ const searchGlobal = async (req, res) => {
         COALESCE(rack_location, 'Rak Utama') AS rack_location, 
         COALESCE(status, 'Tersedia') AS status, 
         COALESCE(year, '2024') AS year,
-        cover_image
+        cover_image,
+        digital_url
       FROM books
       WHERE title LIKE ? 
          OR author LIKE ? 

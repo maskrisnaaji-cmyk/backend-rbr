@@ -137,6 +137,7 @@ async function initDb() {
     await pool.query("ALTER TABLE books ADD COLUMN IF NOT EXISTS cover_image VARCHAR(255) NULL");
     await pool.query("ALTER TABLE books ADD COLUMN IF NOT EXISTS synopsis TEXT NULL");
     await pool.query("ALTER TABLE books ADD COLUMN IF NOT EXISTS year VARCHAR(10) NULL DEFAULT '2024'");
+    await pool.query("ALTER TABLE books ADD COLUMN IF NOT EXISTS digital_url TEXT NULL");
   } catch (err) {
     console.log('Kolom books sudah ada atau tidak perlu diubah:', err.message);
   }

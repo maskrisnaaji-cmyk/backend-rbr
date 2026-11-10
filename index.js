@@ -13,6 +13,7 @@ const searchRoutes  = require('./routes/searchRoutes');
 const uploadRoute   = require('./routes/uploadRoute');
 const aiRoutes      = require('./routes/aiRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const loanRoutes = require('./routes/loanRoutes');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -92,6 +93,7 @@ app.use('/api/search',  searchRoutes);
 app.use('/api/upload',  uploadRoute);
 app.use('/api/ai',      aiRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/loans', loanRoutes);
 
 // ════════════════════════════════════════════════════════════════
 // 6. 404 HANDLER

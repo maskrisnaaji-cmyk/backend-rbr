@@ -142,6 +142,33 @@ async function initDb() {
     console.log('Kolom books sudah ada atau tidak perlu diubah:', err.message);
   }
 
+  // 4b. Peminjaman buku dan request perpanjangan anggota
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS book_loans (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      book_code VARCHAR(50) NOT NULL,
+      title VARCHAR(150) NOT NULL,
+      author VARCHAR(150) NULL,
+      rack_location VARCHAR(50) NULL,
+      member_id INT NULL,
+      member_name VARCHAR(150) NOT NULL,
+      member_email VARCHAR(150) NULL,
+      borrow_date DATE NOT NULL,
+      due_date DATE NOT NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'active',
+      extension_status VARCHAR(30) NOT NULL DEFAULT 'none',
+      extension_days INT NULL,
+      extension_requested_at DATETIME NULL,
+      extension_reviewed_at DATETIME NULL,
+      returned_at DATETIME NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_book_loans_member (member_id),
+      INDEX idx_book_loans_status (status),
+      INDEX idx_book_loans_extension (extension_status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
   // Pastikan tabel users memiliki security_pin
   try {
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS security_pin VARCHAR(50) DEFAULT 'RBR2026'");

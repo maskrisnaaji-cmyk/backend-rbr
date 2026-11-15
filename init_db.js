@@ -312,6 +312,36 @@ async function initDb() {
     console.log('Kolom audit_logs sudah ada atau tidak perlu diubah:', err.message);
   }
 
+  // 7. Tabel notifications — riwayat & status real-time pesanan / transaksi / aktivitas
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NULL,
+      order_id VARCHAR(100) NULL,
+      title VARCHAR(200) NOT NULL,
+      message TEXT NOT NULL,
+      type VARCHAR(50) NOT NULL DEFAULT 'order',
+      order_status VARCHAR(50) NOT NULL DEFAULT 'Pesanan Dibuat',
+      is_read TINYINT(1) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_notif_order_id (order_id),
+      INDEX idx_notif_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  const [notifCount] = await pool.query('SELECT COUNT(*) as count FROM notifications');
+  if (notifCount[0].count === 0) {
+    console.log('🌱 Seeding initial notifications...');
+    await pool.query(`
+      INSERT INTO notifications (order_id, title, message, type, order_status, is_read, created_at) VALUES
+      ('RBR-1042', 'Pesanan Sedang Diproses', 'Pesanan #RBR-1042 (Meja 04) sedang diracik oleh Barista kami.', 'order', 'Sedang Diproses', 0, NOW() - INTERVAL 10 MINUTE),
+      ('RBR-1043', 'Pesanan Baru Dibuat', 'Pesanan #RBR-1043 (Meja 09) telah berhasil dibuat dan menunggu antrean barista.', 'order', 'Pesanan Dibuat', 0, NOW() - INTERVAL 25 MINUTE),
+      ('RBR-1041', 'Pesanan Dalam Pengantaran', 'Pesanan #RBR-1041 (Meja 01) sedang diantarkan oleh staf ke meja Anda.', 'order', 'Dalam Pengantaran', 1, NOW() - INTERVAL 1 HOUR),
+      ('RBR-1040', 'Pesanan Selesai', 'Pesanan #RBR-1040 (Meja 03) telah selesai. Terima kasih telah berkunjung ke Rumah Budaya Ratna!', 'order', 'Selesai', 1, NOW() - INTERVAL 2 HOUR),
+      ('TKT-3041', 'E-Tiket Terkonfirmasi', 'Pendaftaran acara "Napak Tanah Jilid II" berhasil. Siapkan e-tiket saat hadir di lokasi.', 'event', 'Terkonfirmasi', 1, NOW() - INTERVAL 1 DAY);
+    `);
+  }
+
   console.log('✅ Inisialisasi DB selesai!');
   process.exit(0);
 }

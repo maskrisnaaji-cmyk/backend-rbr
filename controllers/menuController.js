@@ -1,9 +1,33 @@
 const pool = require('../config/db');
 
-// GET /api/menus — Ambil semua menu kedai
+// GET /api/menus — Ambil semua menu kedai (mendukung pencarian dinamis)
 const getAllMenus = async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM menus ORDER BY id ASC');
+    const rawQ = req.query.q || req.query.search;
+    const category = req.query.category;
+
+    let sql = 'SELECT * FROM menus';
+    const params = [];
+    const conditions = [];
+
+    if (rawQ && rawQ.trim().length > 0) {
+      const keyword = `%${rawQ.trim()}%`;
+      conditions.push('(name LIKE ? OR category LIKE ? OR description LIKE ?)');
+      params.push(keyword, keyword, keyword);
+    }
+
+    if (category && category !== 'Semua') {
+      conditions.push('category = ?');
+      params.push(category);
+    }
+
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    sql += ' ORDER BY id ASC';
+
+    const [rows] = await pool.query(sql, params);
     res.json(rows);
   } catch (err) {
     console.error('[getAllMenus]', err);

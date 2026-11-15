@@ -3,7 +3,8 @@ const express  = require('express');
 const cors     = require('cors');
 const helmet   = require('helmet');
 const rateLimit = require('express-rate-limit');
-require('dotenv').config();
+const path     = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
 const authRoutes    = require('./routes/authRoutes');
 const menuRoutes    = require('./routes/menuRoutes');
@@ -14,6 +15,8 @@ const uploadRoute   = require('./routes/uploadRoute');
 const aiRoutes      = require('./routes/aiRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const loanRoutes = require('./routes/loanRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const orderRoutes = require('./routes/orderRoutes');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -94,6 +97,8 @@ app.use('/api/upload',  uploadRoute);
 app.use('/api/ai',      aiRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/loans', loanRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/orders', orderRoutes);
 
 // ════════════════════════════════════════════════════════════════
 // 6. 404 HANDLER
@@ -136,6 +141,11 @@ app.use((err, req, res, next) => {
 // ════════════════════════════════════════════════════════════════
 // START SERVER
 // ════════════════════════════════════════════════════════════════
-app.listen(PORT, () => {
-  console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
+

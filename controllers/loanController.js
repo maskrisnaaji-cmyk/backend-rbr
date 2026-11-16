@@ -97,6 +97,74 @@ const requestExtension = async (req, res) => {
   }
 };
 
+const requestLoan = async (req, res) => {
+  try {
+    const {
+      bookCode,
+      title,
+      author,
+      rackLocation,
+      borrowDate,
+      dueDate,
+      memberName,
+      memberEmail,
+      memberPhone,
+      identityNumber,
+      notes,
+    } = req.body;
+
+    if (!bookCode || !title) {
+      return res.status(400).json({ message: 'Kode buku dan judul buku wajib diisi.' });
+    }
+
+    const userId = req.user?.id || null;
+    const name = memberName || req.user?.name || 'Anggota Pustaka';
+    const email = memberEmail || req.user?.email || 'anggota@rumahbudayaratna.id';
+    const today = borrowDate || new Date().toISOString().slice(0, 10);
+    const due = dueDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const [created] = await pool.execute(
+      `INSERT INTO book_loans
+       (book_code, title, author, rack_location, member_id, member_name, member_email, borrow_date, due_date, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [bookCode, title, author || null, rackLocation || null, userId, name, email, today, due]
+    );
+
+    // Perbarui status ketersediaan buku di tabel books menjadi DIPINJAM
+    try {
+      await pool.execute(
+        `UPDATE books SET status = 'DIPINJAM' WHERE id = ? OR code = ? OR title = ?`,
+        [bookCode, bookCode, title]
+      );
+    } catch (updateErr) {
+      console.warn('[requestLoan] Gagal update status buku:', updateErr.message);
+    }
+
+    // Otomatis simpan notifikasi peminjaman fisik jika tabel notifications tersedia
+    try {
+      await pool.execute(
+        `INSERT INTO notifications (user_id, order_id, title, message, type, order_status, is_read)
+         VALUES (?, ?, ?, ?, 'book', 'Peminjaman Diajukan', 0)`,
+        [
+          userId,
+          `LOAN-${created.insertId}`,
+          'Peminjaman Buku Diajukan',
+          `Pengajuan peminjaman fisik "${title}" (${rackLocation || 'Pustaka'}) oleh ${name} telah berhasil diajukan.`,
+        ]
+      );
+    } catch (_) {}
+
+    const [rows] = await pool.execute('SELECT * FROM book_loans WHERE id = ?', [created.insertId]);
+    res.status(201).json({
+      message: 'Pengajuan peminjaman berhasil dikirim.',
+      data: mapLoan(rows[0]),
+    });
+  } catch (err) {
+    console.error('[requestLoan]', err);
+    res.status(500).json({ message: 'Gagal mengajukan peminjaman buku.' });
+  }
+};
+
 const getAllLoans = async (_req, res) => {
   try {
     await syncOverdueStatus();
@@ -120,6 +188,12 @@ const updateLoan = async (req, res) => {
         `UPDATE book_loans SET status = 'returned', returned_at = NOW(), extension_status = 'none' WHERE id = ?`,
         [loan.id]
       );
+      try {
+        await pool.execute(
+          `UPDATE books SET status = 'TERSEDIA' WHERE id = ? OR code = ? OR title = ?`,
+          [loan.book_code, loan.book_code, loan.title]
+        );
+      } catch (_) {}
     } else if (action === 'approve_extension') {
       if (loan.extension_status !== 'pending') {
         return res.status(400).json({ message: 'Tidak ada request perpanjangan yang menunggu.' });
@@ -146,4 +220,4 @@ const updateLoan = async (req, res) => {
   }
 };
 
-module.exports = { getMyLoans, requestExtension, getAllLoans, updateLoan };
+module.exports = { getMyLoans, requestExtension, requestLoan, getAllLoans, updateLoan };

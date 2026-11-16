@@ -22,6 +22,22 @@ const verifyToken = (req, res, next) => {
 };
 
 /**
+ * Middleware: Opsional verifikasi JWT (tidak melempar error jika token kosong)
+ */
+const optionalVerifyToken = (req, _res, next) => {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return next();
+  }
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+  } catch (_) {}
+  next();
+};
+
+/**
  * Middleware: Periksa role user (RBAC)
  * @param {string[]} allowedRoles - Array role yang diizinkan, contoh: ['admin']
  */
@@ -41,4 +57,4 @@ const checkRole = (allowedRoles) => {
   };
 };
 
-module.exports = { verifyToken, checkRole };
+module.exports = { verifyToken, optionalVerifyToken, checkRole };

@@ -16,6 +16,27 @@ async function initDb() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  // 1b. Kupon promo yang dikelola admin dan dipakai mobile app
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS coupons (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      code VARCHAR(50) NOT NULL UNIQUE,
+      description VARCHAR(255) NOT NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'Aktif',
+      theme VARCHAR(20) NOT NULL DEFAULT 'maroon',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  const [couponCount] = await pool.query('SELECT COUNT(*) AS count FROM coupons');
+  if (couponCount[0].count === 0) {
+    await pool.query(
+      `INSERT INTO coupons (code, description, status, theme) VALUES
+       ('BUDAYAKU20', 'Diskon 20% untuk Tiket Event Budaya', 'Aktif', 'maroon'),
+       ('KOPIKULTUR', 'Potongan Rp 10.000 untuk transaksi Kedai', 'Aktif', 'amber')`
+    );
+  }
+
   // 2. Pastikan tabel events lengkap
   await pool.query(`DROP TABLE IF EXISTS events;`);
   await pool.query(`

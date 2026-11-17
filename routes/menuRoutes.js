@@ -5,6 +5,7 @@ const {
   getMenuById,
   createMenu,
   updateMenu,
+  patchMenuStatus,
   deleteMenu,
 } = require('../controllers/menuController');
 
@@ -13,6 +14,8 @@ router.get('/', getAllMenus);
 router.get('/:id', getMenuById);
 router.post('/', createMenu);
 router.put('/:id', updateMenu);
+router.patch('/:id', patchMenuStatus);
+router.patch('/:id/status', patchMenuStatus);
 router.delete('/:id', deleteMenu);
 
 module.exports = router;

@@ -153,7 +153,8 @@ const simulateOrderProgression = async (req, res) => {
     // Update status di tabel orders jika ada
     try {
       const orderDbStatus = nextStatus === 'Pesanan Dibuat' ? 'menunggu' : nextStatus === 'Sedang Diproses' ? 'disiapkan' : nextStatus === 'Dalam Pengantaran' ? 'diantar' : 'selesai';
-      await pool.execute('UPDATE orders SET status = ? WHERE id = ?', [orderDbStatus, orderId]);
+      const orderUiStatus = nextStatus === 'Pesanan Dibuat' ? 'Menunggu' : (nextStatus === 'Sedang Diproses' || nextStatus === 'Dalam Pengantaran') ? 'Disiapkan' : 'Selesai';
+      await pool.execute('UPDATE orders SET status = ?, order_status = ? WHERE id = ? OR order_code = ?', [orderDbStatus, orderUiStatus, orderId, orderId]);
     } catch (_) {}
 
     // Masukkan ke tabel notifications

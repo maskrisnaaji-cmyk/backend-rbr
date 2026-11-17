@@ -12,9 +12,17 @@ async function initDb() {
       price INT(10) NOT NULL,
       description TEXT NOT NULL,
       image VARCHAR(255) NULL,
-      status VARCHAR(50) NOT NULL DEFAULT 'Tersedia'
+      status VARCHAR(50) NOT NULL DEFAULT 'Tersedia',
+      is_available BOOLEAN NOT NULL DEFAULT TRUE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  try {
+    await pool.query("ALTER TABLE menus ADD COLUMN IF NOT EXISTS is_available BOOLEAN NOT NULL DEFAULT TRUE");
+    await pool.query("UPDATE menus SET is_available = CASE WHEN status = 'Habis' THEN FALSE ELSE TRUE END WHERE is_available IS NULL");
+  } catch (err) {
+    console.log('Kolom menus is_available sudah ada atau tidak perlu diubah:', err.message);
+  }
 
   // 1b. Kupon promo yang dikelola admin dan dipakai mobile app
   await pool.query(`
@@ -202,13 +210,31 @@ async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS orders (
       id VARCHAR(50) PRIMARY KEY,
+      order_code VARCHAR(50) NOT NULL,
       table_number VARCHAR(50) NOT NULL,
-      items TEXT NOT NULL,
-      total VARCHAR(50) NOT NULL,
+      items LONGTEXT NOT NULL,
+      total_price INT NOT NULL DEFAULT 0,
+      total VARCHAR(50) NULL,
+      payment_status VARCHAR(20) NOT NULL DEFAULT 'UNPAID',
+      order_status VARCHAR(50) NOT NULL DEFAULT 'Menunggu',
       status VARCHAR(50) NOT NULL DEFAULT 'menunggu',
-      time VARCHAR(50) NOT NULL
+      time VARCHAR(50) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  try {
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_code VARCHAR(50) NULL");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_price INT NOT NULL DEFAULT 0");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) NOT NULL DEFAULT 'UNPAID'");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_status VARCHAR(50) NOT NULL DEFAULT 'Menunggu'");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+    await pool.query("UPDATE orders SET order_code = id WHERE order_code IS NULL OR order_code = ''");
+  } catch (ordErr) {
+    console.log('Kolom orders sudah ada atau tidak perlu diubah:', ordErr.message);
+  }
 
   // Buat view alias SQL jika ada query yang menggunakan nama tabel alternatif
   try {
@@ -218,28 +244,24 @@ async function initDb() {
     console.log('Catatan view alias:', err.message);
   }
 
-  // Seeding data awal pesanan jika masih kosong
-  const [orderCount] = await pool.query('SELECT COUNT(*) as count FROM orders');
-  if (orderCount[0].count === 0) {
-    console.log('🌱 Seeding initial orders...');
-    await pool.query(`
-      INSERT INTO orders (id, table_number, items, total, status, time) VALUES
-      ('RBR-1042', 'Meja 04', '1x Kopi Susu Creamy Gula Aren, 1x Americano Origin, 1x Pisang Goreng', 'Rp 65.000', 'disiapkan', '10 menit lalu'),
-      ('RBR-1043', 'Meja 09', '2x Wedang Uwuh Rempah Khas, 1x Jadah Bakar Serundeng Gurih', 'Rp 45.000', 'menunggu', '5 menit lalu'),
-      ('RBR-1041', 'Meja 01', '1x Single Origin V60 Flores Bajawa, 1x Cirebon Rujak', 'Rp 52.000', 'selesai', '25 menit lalu'),
-      ('RBR-1040', 'Meja 03', '2x Espresso Double Shot, 2x Croissant Butter', 'Rp 78.000', 'selesai', '40 menit lalu');
-    `);
+  // Bersihkan data dummy order awal di database/seeder agar antrean awal benar-benar kosong
+  try {
+    await pool.query("DELETE FROM orders WHERE id IN ('RBR-1040', 'RBR-1041', 'RBR-1042', 'RBR-1043') OR order_code IN ('RBR-1040', 'RBR-1041', 'RBR-1042', 'RBR-1043')");
+    console.log('🧹 Data dummy order awal berhasil dibersihkan dari antrean.');
+  } catch (cleanErr) {
+    console.warn('Catatan pembersihan orders:', cleanErr.message);
   }
+
   const [menuCount] = await pool.query('SELECT COUNT(*) as count FROM menus');
   if (menuCount[0].count === 0) {
     console.log('🌱 Seeding initial menus...');
     await pool.query(`
-      INSERT INTO menus (name, category, price, description, image, status) VALUES
-      ('Es Kopi Susu Creamy', 'Kopi Nusantara', 28000, 'Espresso robusta & arabika blend dengan sirup gula aren murni organik dan susu segar creamy khas racikan barista.', 'assets/images/kopi_susu.jpg', 'Tersedia'),
-      ('Kopi Tubruk', 'Manual Brew', 32000, 'Seduhan manual pour-over V60 berkarakter sweet milk chocolate, floral aroma, dan balance acidity yang halus.', 'assets/images/kopi_tubruk.jpg', 'Tersedia'),
-      ('Americano', 'Manual Brew', 25000, 'Perpaduan kopi espresso murni dengan air mineral panas atau dingin dengan crema halus.', 'assets/images/americano.jpg', 'Tersedia'),
-      ('Wedang Uwuh Rempah', 'Non-Kopi', 22000, 'Racikan rempah daun kayu secang, cengkeh, kayu manis, jahe bakar keprok, dan pemanis alami gula batu.', 'assets/images/wedang_uwuh.jpg', 'Tersedia'),
-      ('Pisang Goreng Keju', 'Camilan Nusantara', 24000, 'Pisang kepok madu goreng tepung renyah dengan taburan keju cheddar parut melimpah dan drizzle saus gula aren.', 'assets/images/pisang_goreng_keju.jpg', 'Habis');
+      INSERT INTO menus (name, category, price, description, image, status, is_available) VALUES
+      ('Es Kopi Susu Creamy', 'Kopi Nusantara', 28000, 'Espresso robusta & arabika blend dengan sirup gula aren murni organik dan susu segar creamy khas racikan barista.', 'assets/images/kopi_susu.jpg', 'Tersedia', TRUE),
+      ('Kopi Tubruk', 'Manual Brew', 32000, 'Seduhan manual pour-over V60 berkarakter sweet milk chocolate, floral aroma, dan balance acidity yang halus.', 'assets/images/kopi_tubruk.jpg', 'Tersedia', TRUE),
+      ('Americano', 'Manual Brew', 25000, 'Perpaduan kopi espresso murni dengan air mineral panas atau dingin dengan crema halus.', 'assets/images/americano.jpg', 'Tersedia', TRUE),
+      ('Wedang Uwuh Rempah', 'Non-Kopi', 22000, 'Racikan rempah daun kayu secang, cengkeh, kayu manis, jahe bakar keprok, dan pemanis alami gula batu.', 'assets/images/wedang_uwuh.jpg', 'Tersedia', TRUE),
+      ('Pisang Goreng Keju', 'Camilan Nusantara', 24000, 'Pisang kepok madu goreng tepung renyah dengan taburan keju cheddar parut melimpah dan drizzle saus gula aren.', 'assets/images/pisang_goreng_keju.jpg', 'Habis', FALSE);
     `);
   }
 
@@ -350,15 +372,16 @@ async function initDb() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
+  // Bersihkan notifikasi order dummy
+  try {
+    await pool.query("DELETE FROM notifications WHERE order_id IN ('RBR-1040', 'RBR-1041', 'RBR-1042', 'RBR-1043')");
+  } catch (_) {}
+
   const [notifCount] = await pool.query('SELECT COUNT(*) as count FROM notifications');
   if (notifCount[0].count === 0) {
     console.log('🌱 Seeding initial notifications...');
     await pool.query(`
       INSERT INTO notifications (order_id, title, message, type, order_status, is_read, created_at) VALUES
-      ('RBR-1042', 'Pesanan Sedang Diproses', 'Pesanan #RBR-1042 (Meja 04) sedang diracik oleh Barista kami.', 'order', 'Sedang Diproses', 0, NOW() - INTERVAL 10 MINUTE),
-      ('RBR-1043', 'Pesanan Baru Dibuat', 'Pesanan #RBR-1043 (Meja 09) telah berhasil dibuat dan menunggu antrean barista.', 'order', 'Pesanan Dibuat', 0, NOW() - INTERVAL 25 MINUTE),
-      ('RBR-1041', 'Pesanan Dalam Pengantaran', 'Pesanan #RBR-1041 (Meja 01) sedang diantarkan oleh staf ke meja Anda.', 'order', 'Dalam Pengantaran', 1, NOW() - INTERVAL 1 HOUR),
-      ('RBR-1040', 'Pesanan Selesai', 'Pesanan #RBR-1040 (Meja 03) telah selesai. Terima kasih telah berkunjung ke Rumah Budaya Ratna!', 'order', 'Selesai', 1, NOW() - INTERVAL 2 HOUR),
       ('TKT-3041', 'E-Tiket Terkonfirmasi', 'Pendaftaran acara "Napak Tanah Jilid II" berhasil. Siapkan e-tiket saat hadir di lokasi.', 'event', 'Terkonfirmasi', 1, NOW() - INTERVAL 1 DAY);
     `);
   }

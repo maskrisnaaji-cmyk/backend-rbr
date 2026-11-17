@@ -58,6 +58,7 @@ const searchGlobal = async (req, res) => {
         price, 
         description, 
         status, 
+        is_available,
         image 
       FROM menus
       WHERE name LIKE ? 
@@ -112,9 +113,13 @@ const searchGlobal = async (req, res) => {
     const ordersQuery = `
       SELECT 
         id, 
+        order_code,
         table_number, 
         items, 
+        total_price,
         total, 
+        payment_status,
+        order_status,
         status, 
         time 
       FROM orders
@@ -136,10 +141,21 @@ const searchGlobal = async (req, res) => {
     ]);
 
     const books = booksRes.status === 'fulfilled' ? booksRes.value[0] : [];
-    const menus = menusRes.status === 'fulfilled' ? menusRes.value[0] : [];
+    const rawMenus = menusRes.status === 'fulfilled' ? menusRes.value[0] : [];
+    const menus = rawMenus.map((m) => ({
+      ...m,
+      is_available: m.is_available === undefined ? (m.status !== 'Habis') : Boolean(m.is_available),
+    }));
     const events = eventsRes.status === 'fulfilled' ? eventsRes.value[0] : [];
     const users = usersRes.status === 'fulfilled' ? usersRes.value[0] : [];
-    const orders = ordersRes.status === 'fulfilled' ? ordersRes.value[0] : [];
+    const rawOrders = ordersRes.status === 'fulfilled' ? ordersRes.value[0] : [];
+    const orders = rawOrders.map((o) => ({
+      ...o,
+      order_code: o.order_code || o.id,
+      total_price: Number(o.total_price) || Number(String(o.total || '0').replace(/[^0-9]/g, '')) || 0,
+      payment_status: o.payment_status || 'UNPAID',
+      order_status: o.order_status || (o.status === 'disiapkan' ? 'Disiapkan' : o.status === 'selesai' ? 'Selesai' : 'Menunggu'),
+    }));
 
     const total = books.length + menus.length + events.length + users.length + orders.length;
 

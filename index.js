@@ -90,17 +90,19 @@ app.get('/', (req, res) => {
 
 // Rate limiter hanya pada route auth (sensitif)
 app.use('/api/auth',    authLimiter, authRoutes);
-app.use('/api/menus',   menuRoutes);
-app.use('/api/events',  eventRoutes);
-app.use('/api/books',   bookRoutes);
-app.use('/api/search',  searchRoutes);
-app.use('/api/upload',  uploadRoute);
-app.use('/api/ai',      aiRoutes);
-app.use('/api/payment', paymentRoutes);
-app.use('/api/loans', loanRoutes);
+app.use('/api/menus',       menuRoutes);
+app.use('/api/kedai/menus', menuRoutes);
+app.use('/api/events',      eventRoutes);
+app.use('/api/books',       bookRoutes);
+app.use('/api/search',      searchRoutes);
+app.use('/api/upload',      uploadRoute);
+app.use('/api/ai',          aiRoutes);
+app.use('/api/payment',     paymentRoutes);
+app.use('/api/loans',       loanRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/orders', orderRoutes);
-app.use('/api/coupons', couponRoutes);
+app.use('/api/orders',       orderRoutes);
+app.use('/api/kedai/orders', orderRoutes);
+app.use('/api/coupons',      couponRoutes);
 
 // ════════════════════════════════════════════════════════════════
 // 6. 404 HANDLER

@@ -46,7 +46,6 @@ async function initDb() {
   }
 
   // 2. Pastikan tabel events lengkap
-  await pool.query(`DROP TABLE IF EXISTS events;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS events (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -57,12 +56,32 @@ async function initDb() {
       price INT(10) NOT NULL DEFAULT 0,
       quota INT(11) NOT NULL DEFAULT 50,
       sold INT(11) NOT NULL DEFAULT 0,
-      status VARCHAR(50) NOT NULL DEFAULT 'Aktif',
+      booked_count INT(11) NOT NULL DEFAULT 0,
+      status VARCHAR(50) NOT NULL DEFAULT 'Tiket Tersedia',
       image VARCHAR(255) NULL,
       banner_image VARCHAR(255) NULL,
       category VARCHAR(50) NULL DEFAULT 'Budaya'
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  try {
+    await pool.query("ALTER TABLE events ADD COLUMN booked_count INT DEFAULT 0 AFTER sold");
+    console.log('Kolom events booked_count berhasil ditambahkan.');
+  } catch (err) {
+    if (err.code === 'ER_DUP_FIELDNAME' || err.message?.includes('Duplicate column')) {
+      console.log('Kolom events booked_count sudah ada.');
+    } else {
+      console.log('Catatan ALTER booked_count:', err.message);
+    }
+  }
+
+  try {
+    await pool.query("UPDATE events SET booked_count = COALESCE(sold, 0) WHERE booked_count = 0 OR booked_count IS NULL");
+    await pool.query("UPDATE events SET status = 'Tiket Tersedia' WHERE status IN ('Aktif', 'Tersedia')");
+    await pool.query("UPDATE events SET status = 'Tiket Penuh' WHERE status IN ('Penuh', 'Habis') OR (quota > 0 AND booked_count >= quota)");
+  } catch (err) {
+    console.log('Catatan sinkronisasi data events:', err.message);
+  }
 
   try {
     await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS image VARCHAR(255) NULL");
@@ -269,14 +288,14 @@ async function initDb() {
   if (eventCount[0].count === 0) {
     console.log('🌱 Seeding initial events...');
     await pool.query(`
-      INSERT INTO events (title, date, time, location, price, quota, sold, status, image, banner_image, category) VALUES
-      ('Napak Tanah Jilid II Book Club', '2026-09-28', '15:30 WIB', 'Ruang Komunal Lt. 2', 25000, 50, 42, 'Aktif', '/napak_tanah.jpeg', '/napak_tanah.jpeg', 'Lokakarya'),
-      ('Penampilan Seni Teater Pak Rungkad', '2026-09-29', '19:00 WIB', 'Panggung Utama Pendopo', 35000, 30, 30, 'Penuh', '/pak_rungkad.jpeg', '/pak_rungkad.jpeg', 'Wicara Seni'),
-      ('Obrolan Budaya: Kearifan Lokal Jawa', '2026-10-08', '13:00 WIB', 'Ruang Komunal Lt. 1', 15000, 40, 32, 'Aktif', '/oktober_08_obrolan_budaya.jpg', '/oktober_08_obrolan_budaya.jpg', 'Diskusi'),
-      ('Pameran Batik Kontemporer Nusantara', '2026-10-09', '10:00 WIB', 'Galeri Utama', 20000, 50, 30, 'Aktif', '/oktober_09_pameran_batik.jpg', '/oktober_09_pameran_batik.jpg', 'Pameran'),
-      ('Workshop Keramik: Membentuk Tanah Liat', '2026-10-11', '09:00 WIB', 'Studio Kreatif', 45000, 20, 14, 'Aktif', '/oktober_11_workshop_keramik.jpg', '/oktober_11_workshop_keramik.jpg', 'Workshop'),
-      ('Malam Akustik & Puisi Nusantara', '2026-10-12', '19:00 WIB', 'Pendopo Utama', 30000, 50, 18, 'Aktif', '/oktober_12_malam_akustik.jpg', '/oktober_12_malam_akustik.jpg', 'Pertunjukan'),
-      ('Sabtu Budaya: Gotong Royong Seni', '2026-10-13', '10:00 WIB', 'Taman Budaya', 0, 50, 25, 'Aktif', '/oktober_13_sabtu_budaya.jpg', '/oktober_13_sabtu_budaya.jpg', 'Komunitas');
+      INSERT INTO events (title, date, time, location, price, quota, sold, booked_count, status, image, banner_image, category) VALUES
+      ('Napak Tanah Jilid II Book Club', '2026-09-28', '15:30 WIB', 'Ruang Komunal Lt. 2', 25000, 50, 42, 42, 'Tiket Tersedia', '/napak_tanah.jpeg', '/napak_tanah.jpeg', 'Lokakarya'),
+      ('Penampilan Seni Teater Pak Rungkad', '2026-09-29', '19:00 WIB', 'Panggung Utama Pendopo', 35000, 30, 30, 30, 'Tiket Penuh', '/pak_rungkad.jpeg', '/pak_rungkad.jpeg', 'Wicara Seni'),
+      ('Obrolan Budaya: Kearifan Lokal Jawa', '2026-10-08', '13:00 WIB', 'Ruang Komunal Lt. 1', 15000, 40, 32, 32, 'Tiket Tersedia', '/oktober_08_obrolan_budaya.jpg', '/oktober_08_obrolan_budaya.jpg', 'Diskusi'),
+      ('Pameran Batik Kontemporer Nusantara', '2026-10-09', '10:00 WIB', 'Galeri Utama', 20000, 50, 30, 30, 'Tiket Tersedia', '/oktober_09_pameran_batik.jpg', '/oktober_09_pameran_batik.jpg', 'Pameran'),
+      ('Workshop Keramik: Membentuk Tanah Liat', '2026-10-11', '09:00 WIB', 'Studio Kreatif', 45000, 20, 14, 14, 'Tiket Tersedia', '/oktober_11_workshop_keramik.jpg', '/oktober_11_workshop_keramik.jpg', 'Workshop'),
+      ('Malam Akustik & Puisi Nusantara', '2026-10-12', '19:00 WIB', 'Pendopo Utama', 30000, 50, 18, 18, 'Tiket Tersedia', '/oktober_12_malam_akustik.jpg', '/oktober_12_malam_akustik.jpg', 'Pertunjukan'),
+      ('Sabtu Budaya: Gotong Royong Seni', '2026-10-13', '10:00 WIB', 'Taman Budaya', 0, 50, 25, 25, 'Tiket Tersedia', '/oktober_13_sabtu_budaya.jpg', '/oktober_13_sabtu_budaya.jpg', 'Komunitas');
     `);
   }
 

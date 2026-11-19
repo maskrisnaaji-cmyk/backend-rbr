@@ -7,6 +7,7 @@
 
 const midtransClient = require('midtrans-client');
 const pool = require('../config/db');
+const { formatEventRow } = require('./eventController');
 
 // ─── Inisialisasi Midtrans Core API (Sandbox Mode) ─────────────────────────
 const coreApi = new midtransClient.CoreApi({
@@ -149,14 +150,20 @@ const createCharge = async (req, res) => {
     // Jika transaksi adalah tiket acara, simpan ke ticket_transactions
     if (order_type === 'ticket') {
       try {
+        // Hitung total qty dari items (atau default 1)
+        const ticketQty = Array.isArray(items) && items.length > 0
+          ? items.reduce((sum, it) => sum + Math.max(1, Number(it.quantity || it.qty || 1)), 0)
+          : 1;
+
         await pool.execute(
-          `INSERT INTO ticket_transactions 
-            (event_id, customer_name, customer_email, amount, status, order_id, payment_method)
-           VALUES (?, ?, ?, ?, 'Menunggu Pembayaran', ?, ?)`,
+          `INSERT INTO ticket_transactions
+            (event_id, customer_name, customer_email, quantity, amount, status, order_id, payment_method)
+           VALUES (?, ?, ?, ?, ?, 'Menunggu Pembayaran', ?, ?)`,
           [
             event_id || null,
             customer_name || 'Pengunjung RBR',
             customer_email || 'customer@rumahbudayaratna.id',
+            ticketQty,
             amount,
             cleanOrderId,
             isQris ? 'qris' : `va_${bankName}`,
@@ -305,6 +312,7 @@ const checkStatus = async (req, res) => {
 /**
  * POST /api/payment/notification
  * Webhook callback dari Midtrans untuk memperbarui status pesanan menjadi 'paid' secara otomatis saat transaksi sukses.
+ * Sekaligus menambah booked_count event sesuai quantity tiket yang dibeli.
  */
 const handleNotification = async (req, res) => {
   try {
@@ -346,19 +354,54 @@ const handleNotification = async (req, res) => {
         [orderStatus, txStatus, JSON.stringify(statusResponse), orderId]
       );
 
-      const ticketStatus = orderStatus === 'paid' ? 'Lunas' : (orderStatus === 'failed' ? 'Gagal' : 'Menunggu Pembayaran');
+      const ticketStatus =
+        orderStatus === 'paid' ? 'Lunas' :
+        orderStatus === 'failed' ? 'Gagal' : 'Menunggu Pembayaran';
       await pool.execute(
         `UPDATE ticket_transactions SET status = ? WHERE order_id = ?`,
         [ticketStatus, orderId]
       );
 
+      // Jika lunas: tambah booked_count sesuai quantity tiket yang dibeli
       if (orderStatus === 'paid') {
         try {
-          const [ttRows] = await pool.execute('SELECT event_id FROM ticket_transactions WHERE order_id = ?', [orderId]);
+          const [ttRows] = await pool.execute(
+            'SELECT event_id, quantity FROM ticket_transactions WHERE order_id = ? LIMIT 1',
+            [orderId]
+          );
           if (ttRows.length > 0 && ttRows[0].event_id) {
-            await pool.execute('UPDATE events SET sold = sold + 1 WHERE id = ?', [ttRows[0].event_id]);
+            const eventId = ttRows[0].event_id;
+            const qty = Math.max(1, Number(ttRows[0].quantity) || 1);
+
+            // Gunakan transaksi DB untuk atomic update + auto Tiket Penuh
+            const conn = await pool.getConnection();
+            try {
+              await conn.beginTransaction();
+              const [evRows] = await conn.execute(
+                'SELECT quota, booked_count, sold FROM events WHERE id = ? FOR UPDATE',
+                [eventId]
+              );
+              if (evRows.length > 0) {
+                const quota = Number(evRows[0].quota) || 0;
+                const newBooked = Number(evRows[0].booked_count ?? evRows[0].sold ?? 0) + qty;
+                const newStatus = quota > 0 && newBooked >= quota ? 'Tiket Penuh' : 'Tiket Tersedia';
+                await conn.execute(
+                  'UPDATE events SET booked_count = ?, sold = ?, status = ? WHERE id = ?',
+                  [newBooked, newBooked, newStatus, eventId]
+                );
+                console.log(`[handleNotification] Event #${eventId}: booked_count -> ${newBooked}, status -> ${newStatus}`);
+              }
+              await conn.commit();
+            } catch (evErr) {
+              await conn.rollback();
+              console.error('[handleNotification] Update booked_count gagal:', evErr.message);
+            } finally {
+              conn.release();
+            }
           }
-        } catch (_) {}
+        } catch (ttErr) {
+          console.error('[handleNotification] Ambil ticket_transaction gagal:', ttErr.message);
+        }
       }
     }
 

@@ -1,0 +1,112 @@
+import { Request, Response } from 'express';
+import path from 'path';
+import { updateBookCover } from '../models/bookModel';
+import { updateEventBannerAndImage } from '../models/eventModel';
+import { updateMenuImage } from '../models/menuModel';
+import { updateTicketTransactionProof } from '../models/transactionModel';
+
+export const MAX_FILE_SIZE = 5 * 1024 * 1024;
+export const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+export const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+export const validateUploadTarget = (req: Request) => {
+  const entity = (req.body.entity || req.body.type || '').toLowerCase();
+  const entityId = req.body.entityId || req.body.id;
+
+  if (!entity && !entityId) return { entity: null, entityId: null };
+  if (!['event', 'ticket', 'menu', 'book'].includes(entity)) {
+    const error: any = new Error('Target upload harus berupa event, menu, ticket, atau book.');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (entity !== 'book' && (!entityId || !/^\d+$/.test(String(entityId)))) {
+    const error: any = new Error('entityId wajib berupa ID numerik.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return { entity, entityId: entity === 'book' ? String(entityId || '') : Number(entityId) };
+};
+
+export const persistUploadedUrl = async ({ entity, entityId, url }: { entity: string | null; entityId: any; url: string }) => {
+  if (!entity) return;
+
+  if (entity === 'book') {
+    if (entityId) {
+      await updateBookCover(url, entityId).catch(() => {});
+    }
+    return;
+  }
+
+  if (entity === 'event') {
+    const result = await updateEventBannerAndImage(url, entityId);
+    if (result.affectedRows === 0) {
+      const error: any = new Error('Event tidak ditemukan.');
+      error.statusCode = 404;
+      throw error;
+    }
+    return;
+  }
+
+  if (entity === 'menu') {
+    const result = await updateMenuImage(url, entityId);
+    if (result.affectedRows === 0) {
+      const error: any = new Error('Menu tidak ditemukan.');
+      error.statusCode = 404;
+      throw error;
+    }
+    return;
+  }
+
+  const result = await updateTicketTransactionProof(url, entityId);
+  if (result.affectedRows === 0) {
+    const error: any = new Error('Transaksi tiket tidak ditemukan.');
+    error.statusCode = 404;
+    throw error;
+  }
+};
+
+// POST /api/upload
+export const uploadFile = async (req: Request, res: Response) => {
+  try {
+    const target = validateUploadTarget(req);
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ message: 'File wajib diunggah pada field file.' });
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      return res.status(400).json({ message: 'Ukuran file maksimal 5 MB.' });
+    }
+
+    const extension = path.extname(file.originalname).toLowerCase();
+    if (!ALLOWED_EXTENSIONS.has(extension) || !ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      return res.status(400).json({ message: 'Format file harus JPG, JPEG, PNG, atau WEBP.' });
+    }
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      console.error('[uploadFile] BLOB_READ_WRITE_TOKEN belum dikonfigurasi.');
+      return res.status(500).json({ message: 'Konfigurasi cloud storage belum tersedia.' });
+    }
+
+    // Hindari path traversal dan karakter nama yang tidak perlu pada object key.
+    const safeName = path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '-');
+    const { put } = await import('@vercel/blob');
+    const blob = await put(`uploads/${Date.now()}-${safeName}`, file.buffer, {
+      access: 'public',
+      contentType: file.mimetype,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
+
+    await persistUploadedUrl({ ...target, url: blob.url });
+    return res.json({ status: 'success', url: blob.url });
+  } catch (err: any) {
+    console.error('[uploadFile]', err);
+    const statusCode = err.statusCode || 500;
+    return res.status(statusCode).json({
+      message: statusCode === 500 ? 'Gagal mengunggah file ke Vercel Blob.' : err.message,
+    });
+  }
+};
+
+module.exports = { uploadFile, MAX_FILE_SIZE, ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES };
+

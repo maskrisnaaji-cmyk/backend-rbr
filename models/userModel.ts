@@ -7,8 +7,12 @@ export interface User {
   phone?: string | null;
   password?: string;
   role: 'admin' | 'user' | string;
+  is_verified?: number | boolean;
   security_pin?: string;
   createdAt?: Date | string;
+  visit_count?: number;
+  visits?: string;
+  status?: string;
 }
 
 export const findUserEmailOnly = async (email: string) => {
@@ -108,4 +112,59 @@ export const searchUsers = async (keyword: string) => {
     [keyword, keyword, keyword]
   );
   return rows as User[];
+};
+
+export const getAllMembers = async () => {
+  const [rows] = await pool.query(`
+    SELECT 
+      u.id, 
+      u.name, 
+      u.email, 
+      u.phone, 
+      u.role, 
+      COALESCE(u.is_verified, 0) AS is_verified,
+      u.createdAt,
+      (
+        (SELECT COUNT(*) FROM transactions t WHERE t.customer_email = u.email AND (t.order_type = 'kedai' OR t.order_type IS NULL)) +
+        (SELECT COUNT(*) FROM ticket_transactions tt WHERE tt.customer_email = u.email) +
+        (SELECT COUNT(*) FROM book_loans bl WHERE bl.member_id = u.id OR bl.member_email = u.email)
+      ) AS visit_count
+    FROM users u
+    WHERE u.role = 'user'
+    ORDER BY u.id DESC
+  `);
+  return rows as User[];
+};
+
+export const getUserById = async (id: number | string) => {
+  const [rows] = await pool.execute(
+    'SELECT id, name, email, phone, role, is_verified, createdAt FROM users WHERE id = ?',
+    [id]
+  );
+  return rows as User[];
+};
+
+export const getUserByEmail = async (email: string) => {
+  const [rows] = await pool.execute(
+    'SELECT id, name, email, phone, role, is_verified, createdAt FROM users WHERE email = ?',
+    [email]
+  );
+  return rows as User[];
+};
+
+export const updateUserVerification = async (id: number | string, isVerified: number | boolean | string) => {
+  const statusVal = (isVerified === true || isVerified === 1 || String(isVerified) === '1' || String(isVerified) === 'true') ? 1 : 0;
+  const [result] = await pool.execute(
+    'UPDATE users SET is_verified = ? WHERE id = ?',
+    [statusVal, id]
+  );
+  return result as any;
+};
+
+export const deleteUserById = async (id: number | string) => {
+  const [result] = await pool.execute(
+    'DELETE FROM users WHERE id = ?',
+    [id]
+  );
+  return result as any;
 };

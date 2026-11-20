@@ -18,20 +18,60 @@ export async function getAllCoupons(req: Request, res: Response) {
 
 export async function createCoupon(req: Request, res: Response) {
   try {
-    const { code, desc, status, theme } = req.body;
-    const normalizedCode = String(code || '').trim().toUpperCase();
-    const description = String(desc || '').trim();
+    const {
+      code,
+      desc,
+      description: rawDesc,
+      discount_type,
+      discount_value,
+      target_member,
+      is_active,
+      status,
+      theme,
+    } = req.body;
 
-    if (!normalizedCode || !description) {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    const finalDesc = String(desc || rawDesc || '').trim();
+
+    if (!normalizedCode || !finalDesc) {
       return res.status(400).json({ message: 'Kode dan deskripsi kupon wajib diisi.' });
     }
 
+    // Ekstraksi otomatis discount_type & discount_value jika form tidak mengirimnya secara eksplisit
+    let dType = discount_type ? String(discount_type).toLowerCase() : '';
+    let dVal = Number(discount_value) || 0;
+
+    if (!dType || !dVal) {
+      const percentMatch = finalDesc.match(/(\d+)\s*%/);
+      const fixedMatch = finalDesc.match(/Rp\s*([\d.]+)/i);
+      if (percentMatch) {
+        dType = 'percent';
+        dVal = parseInt(percentMatch[1], 10);
+      } else if (fixedMatch) {
+        dType = 'fixed';
+        dVal = parseInt(fixedMatch[1].replace(/\./g, ''), 10);
+      } else {
+        dType = dType || 'percent';
+        dVal = dVal || 10;
+      }
+    }
+
+    const target = target_member === 'verified' ? 'verified' : 'all';
+    const active = is_active !== undefined ? (is_active ? 1 : 0) : (status === 'Nonaktif' ? 0 : 1);
+    const statusVal = active ? 'Aktif' : 'Nonaktif';
+    const themeVal = theme || (dType === 'fixed' ? 'amber' : 'maroon');
+
     const result = await createCouponModel(
       normalizedCode,
-      description,
-      status || 'Aktif',
-      theme || 'maroon'
+      finalDesc,
+      dType,
+      dVal,
+      target,
+      active,
+      statusVal,
+      themeVal
     );
+
     const rows = await getCouponById(result.insertId);
     res.status(201).json(rows[0]);
   } catch (err: any) {

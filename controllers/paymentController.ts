@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import pool from '../config/db';
 import {
-  createTransaction,
+  createTransaction as createTransactionModel,
   createTicketTransaction,
   updateTransactionSettlement,
   updateTicketTransactionPaid,
@@ -10,15 +10,125 @@ import {
   updateTicketTransactionStatus,
   getTicketTransactionByOrderId,
 } from '../models/transactionModel';
+import { getCouponByCode } from '../models/couponModel';
+import { getUserById, getUserByEmail } from '../models/userModel';
 
 const midtransClient = require('midtrans-client');
 
-// ─── Inisialisasi Midtrans Core API (Sandbox Mode) ─────────────────────────
+// ─── Inisialisasi Midtrans Core API & Snap (Sandbox Mode) ───────────────────
 const coreApi = new midtransClient.CoreApi({
   isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
   serverKey: process.env.MIDTRANS_SERVER_KEY || 'SB-Mid-server-cNRPfg50s3Xc.ZQuesNEDHdv',
   clientKey: process.env.MIDTRANS_CLIENT_KEY || 'SB-Mid-server-cNRPfg50s3Xc.ZQuesNEDHdv',
 });
+
+const snap = new midtransClient.Snap({
+  isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
+  serverKey: process.env.MIDTRANS_SERVER_KEY || 'SB-Mid-server-cNRPfg50s3Xc.ZQuesNEDHdv',
+  clientKey: process.env.MIDTRANS_CLIENT_KEY || 'SB-Mid-server-cNRPfg50s3Xc.ZQuesNEDHdv',
+});
+
+/**
+ * Helper untuk memvalidasi kupon promo dan menghitung nilai diskon:
+ * - Memeriksa keberadaan kode kupon (case-insensitive)
+ * - Memeriksa status aktif kupon
+ * - Memeriksa kepemilikan status Anggota Terverifikasi jika target_member === 'verified'
+ * - Menghitung diskon persen maupun nominal fixed
+ * - Memastikan gross_amount akhir minimal Rp 1 sesuai aturan Midtrans
+ */
+interface ApplyCouponParams {
+  couponCode?: string;
+  subtotal: number;
+  userId?: number | string;
+  customerEmail?: string;
+}
+
+interface ApplyCouponResult {
+  valid: boolean;
+  message?: string;
+  coupon?: any;
+  discountAmount: number;
+}
+
+export const applyCouponDiscount = async ({
+  couponCode,
+  subtotal,
+  userId,
+  customerEmail,
+}: ApplyCouponParams): Promise<ApplyCouponResult> => {
+  if (!couponCode || !String(couponCode).trim()) {
+    return { valid: true, discountAmount: 0 };
+  }
+
+  const cleanCode = String(couponCode).trim().toUpperCase();
+  const coupons = await getCouponByCode(cleanCode);
+
+  if (!coupons || coupons.length === 0) {
+    return {
+      valid: false,
+      message: `Kupon promo "${cleanCode}" tidak ditemukan atau tidak valid.`,
+      discountAmount: 0,
+    };
+  }
+
+  const coupon: any = coupons[0];
+
+  // Periksa apakah kupon aktif
+  const isActive = coupon.is_active === 1 || coupon.is_active === true || coupon.status === 'Aktif';
+  if (!isActive) {
+    return {
+      valid: false,
+      message: `Kupon promo "${cleanCode}" sudah tidak aktif atau kedaluwarsa.`,
+      discountAmount: 0,
+    };
+  }
+
+  // Periksa target member ('verified' vs 'all')
+  const targetMember = String(coupon.target_member || 'all').toLowerCase();
+  if (targetMember === 'verified' || targetMember === 'terverifikasi') {
+    let user = null;
+    if (userId) {
+      const users = await getUserById(userId);
+      if (users.length > 0) user = users[0];
+    }
+    if (!user && customerEmail) {
+      const users = await getUserByEmail(customerEmail);
+      if (users.length > 0) user = users[0];
+    }
+
+    const isUserVerified = user && (user.is_verified === 1 || user.is_verified === true || user.is_verified === '1');
+    if (!isUserVerified) {
+      return {
+        valid: false,
+        message: `Kupon promo "${cleanCode}" hanya berlaku untuk Anggota Terverifikasi. Silakan hubungi admin atau lengkapi verifikasi akun Anda.`,
+        discountAmount: 0,
+      };
+    }
+  }
+
+  // Hitung besaran diskon
+  let discountAmount = 0;
+  const discValue = Number(coupon.discount_value) || 0;
+  const discType = String(coupon.discount_type || 'percent').toLowerCase();
+
+  if (discType === 'percent' || discType === 'percentage' || discType === '%') {
+    discountAmount = Math.round((subtotal * discValue) / 100);
+  } else {
+    // Nominal tetap (fixed)
+    discountAmount = Math.round(discValue);
+  }
+
+  // Aturan Midtrans: gross_amount minimal 1 rupiah, diskon tidak boleh membuat total <= 0
+  if (discountAmount >= subtotal) {
+    discountAmount = Math.max(0, subtotal - 1);
+  }
+
+  return {
+    valid: true,
+    coupon,
+    discountAmount,
+  };
+};
 
 /**
  * POST /api/payment/charge
@@ -39,6 +149,9 @@ export const createCharge = async (req: Request, res: Response) => {
       order_type,   // 'kedai' atau 'ticket'
       event_id,
       items,
+      coupon_code,
+      promo_code,
+      user_id,
     } = req.body;
 
     const amount = Math.round(Number(gross_amount));
@@ -48,6 +161,32 @@ export const createCharge = async (req: Request, res: Response) => {
         message: 'Nominal transaksi (gross_amount) wajib diisi dan harus lebih dari 0.',
       });
     }
+
+    // Terapkan kupon promo jika diberikan
+    const code = coupon_code || promo_code || req.body.code;
+    let discountAmount = 0;
+    let appliedCoupon = null;
+
+    if (code) {
+      const discountResult = await applyCouponDiscount({
+        couponCode: code,
+        subtotal: amount,
+        userId: user_id,
+        customerEmail: customer_email,
+      });
+
+      if (!discountResult.valid) {
+        return res.status(400).json({
+          success: false,
+          message: discountResult.message,
+        });
+      }
+
+      discountAmount = discountResult.discountAmount;
+      appliedCoupon = discountResult.coupon;
+    }
+
+    const finalAmount = Math.max(1, amount - discountAmount);
 
     const cleanOrderId = (order_id && String(order_id).trim())
       ? String(order_id).trim().replace(/[^a-zA-Z0-9\-_]/g, '')
@@ -59,7 +198,7 @@ export const createCharge = async (req: Request, res: Response) => {
     let chargeParameter: any = {
       transaction_details: {
         order_id: cleanOrderId,
-        gross_amount: amount,
+        gross_amount: finalAmount,
       },
       customer_details: {
         first_name: (customer_name && String(customer_name).trim()) || 'Pengunjung RBR',
@@ -75,6 +214,16 @@ export const createCharge = async (req: Request, res: Response) => {
         quantity: Math.max(1, Number(item.quantity || item.qty || 1)),
         name: String(item.name || item.title || 'Pesanan RBR').substring(0, 50),
       }));
+
+      // Tambahkan item promo berharga negatif jika ada diskon
+      if (discountAmount > 0) {
+        chargeParameter.item_details.push({
+          id: 'PROMO',
+          name: `Diskon Kupon ${appliedCoupon?.code || code}`.substring(0, 50),
+          price: -discountAmount,
+          quantity: 1,
+        });
+      }
     }
 
     // Susun parameter sesuai Core API Midtrans
@@ -128,11 +277,11 @@ export const createCharge = async (req: Request, res: Response) => {
 
     // Simpan data transaksi ke tabel transactions di database MySQL
     try {
-      await createTransaction(
+      await createTransactionModel(
         cleanOrderId,
         chargeParameter.payment_type,
         isQris ? 'qris' : `va_${bankName}`,
-        amount,
+        finalAmount,
         'pending',
         'pending',
         extractedVaNumber || null,
@@ -142,7 +291,7 @@ export const createCharge = async (req: Request, res: Response) => {
         customer_name || 'Pengunjung RBR',
         customer_email || 'customer@rumahbudayaratna.id',
         order_type || 'kedai',
-        items ? JSON.stringify(items) : ''
+        chargeParameter.item_details ? JSON.stringify(chargeParameter.item_details) : (items ? JSON.stringify(items) : '')
       );
     } catch (dbErr: any) {
       console.warn('[paymentController] Simpan transactions error:', dbErr.message);
@@ -151,7 +300,6 @@ export const createCharge = async (req: Request, res: Response) => {
     // Jika transaksi adalah tiket acara, simpan ke ticket_transactions
     if (order_type === 'ticket') {
       try {
-        // Hitung total qty dari items (atau default 1)
         const ticketQty = Array.isArray(items) && items.length > 0
           ? items.reduce((sum: number, it: any) => sum + Math.max(1, Number(it.quantity || it.qty || 1)), 0)
           : 1;
@@ -161,7 +309,7 @@ export const createCharge = async (req: Request, res: Response) => {
           customer_name || '',
           customer_email || '',
           ticketQty,
-          amount,
+          finalAmount,
           'Menunggu Pembayaran',
           cleanOrderId,
           isQris ? 'QRIS' : `Transfer VA ${bankName.toUpperCase()}`
@@ -177,7 +325,10 @@ export const createCharge = async (req: Request, res: Response) => {
       data: {
         order_id: cleanOrderId,
         payment_type: chargeParameter.payment_type,
-        gross_amount: amount,
+        gross_amount: finalAmount,
+        subtotal: amount,
+        discount_amount: discountAmount,
+        coupon_code: appliedCoupon ? appliedCoupon.code : null,
         transaction_status: chargeResponse.transaction_status || 'pending',
         va_number: extractedVaNumber,
         bill_key: extractedBillKey,
@@ -194,6 +345,191 @@ export const createCharge = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: `Gagal membuat tagihan Core API: ${err.message}`,
+    });
+  }
+};
+
+/**
+ * POST /api/payment/transaction | /api/payment/create-transaction | /api/payment/snap
+ * Membuat Snap Token & Redirect URL untuk pembayaran via Midtrans Snap (Sandbox).
+ * Menghitung diskon kupon, menyisipkan item negatif PROMO ke item_details,
+ * dan memastikan gross_amount = sum(item_details).
+ */
+export const createTransaction = async (req: Request, res: Response) => {
+  try {
+    const {
+      order_id,
+      gross_amount,
+      customer_name,
+      customer_email,
+      customer_phone,
+      order_type,   // 'kedai' atau 'ticket'
+      event_id,
+      items,
+      coupon_code,
+      promo_code,
+      user_id,
+    } = req.body;
+
+    const code = coupon_code || promo_code || req.body.code;
+
+    // Hitung subtotal awal dari items atau gross_amount
+    let parsedItems: any[] = [];
+    let subtotal = 0;
+
+    if (Array.isArray(items) && items.length > 0) {
+      parsedItems = items.map((item: any, idx: number) => {
+        const itemPrice = Math.round(Number(item.price || item.harga || 0));
+        const itemQty = Math.max(1, Number(item.quantity || item.qty || 1));
+        subtotal += itemPrice * itemQty;
+        return {
+          id: String(item.id || idx + 1).substring(0, 50),
+          price: itemPrice,
+          quantity: itemQty,
+          name: String(item.name || item.title || 'Pesanan RBR').substring(0, 50),
+        };
+      });
+    }
+
+    if (subtotal <= 0) {
+      subtotal = Math.round(Number(gross_amount || 0));
+      if (subtotal > 0 && parsedItems.length === 0) {
+        parsedItems = [
+          {
+            id: 'ITEM-1',
+            price: subtotal,
+            quantity: 1,
+            name: order_type === 'ticket' ? 'Tiket Acara RBR' : 'Pesanan RBR',
+          },
+        ];
+      }
+    }
+
+    if (subtotal <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nominal transaksi wajib diisi dan harus lebih dari 0.',
+      });
+    }
+
+    // Terapkan kupon promo jika diberikan
+    let discountAmount = 0;
+    let appliedCoupon = null;
+
+    if (code) {
+      const discountResult = await applyCouponDiscount({
+        couponCode: code,
+        subtotal,
+        userId: user_id,
+        customerEmail: customer_email,
+      });
+
+      if (!discountResult.valid) {
+        return res.status(400).json({
+          success: false,
+          message: discountResult.message,
+        });
+      }
+
+      discountAmount = discountResult.discountAmount;
+      appliedCoupon = discountResult.coupon;
+    }
+
+    const finalGrossAmount = Math.max(1, subtotal - discountAmount);
+
+    // Aturan Midtrans: sum(item_details) HARUS sama persis dengan gross_amount
+    const finalItemDetails = [...parsedItems];
+    if (discountAmount > 0) {
+      finalItemDetails.push({
+        id: 'PROMO',
+        name: `Diskon Kupon ${appliedCoupon?.code || code}`.substring(0, 50),
+        price: -discountAmount,
+        quantity: 1,
+      });
+    }
+
+    const cleanOrderId = (order_id && String(order_id).trim())
+      ? String(order_id).trim().replace(/[^a-zA-Z0-9\-_]/g, '')
+      : `RBR-${(order_type || 'ORD').toUpperCase()}-${Date.now()}`;
+
+    const snapParameter: any = {
+      transaction_details: {
+        order_id: cleanOrderId,
+        gross_amount: finalGrossAmount,
+      },
+      customer_details: {
+        first_name: (customer_name && String(customer_name).trim()) || 'Pengunjung RBR',
+        email: (customer_email && String(customer_email).trim()) || 'customer@rumahbudayaratna.id',
+        phone: (customer_phone && String(customer_phone).trim()) || '081234567890',
+      },
+      item_details: finalItemDetails,
+    };
+
+    console.log(`[Snap createTransaction] Membuat transaksi Snap untuk order ${cleanOrderId} (gross_amount: ${finalGrossAmount})...`);
+    const snapTransaction = await snap.createTransaction(snapParameter);
+
+    // Simpan ke database MySQL
+    try {
+      await createTransactionModel(
+        cleanOrderId,
+        'snap',
+        'snap',
+        finalGrossAmount,
+        'pending',
+        'pending',
+        null,
+        'midtrans',
+        null,
+        snapTransaction.redirect_url || null,
+        customer_name || 'Pengunjung RBR',
+        customer_email || 'customer@rumahbudayaratna.id',
+        order_type || 'kedai',
+        JSON.stringify(finalItemDetails)
+      );
+    } catch (dbErr: any) {
+      console.warn('[paymentController] Simpan transactions error:', dbErr.message);
+    }
+
+    if (order_type === 'ticket') {
+      try {
+        const ticketQty = parsedItems.reduce((sum: number, it: any) => sum + it.quantity, 0) || 1;
+        await createTicketTransaction(
+          event_id || 0,
+          customer_name || '',
+          customer_email || '',
+          ticketQty,
+          finalGrossAmount,
+          'Menunggu Pembayaran',
+          cleanOrderId,
+          'Midtrans Snap'
+        );
+      } catch (ttErr: any) {
+        console.warn('[paymentController] Simpan ticket_transactions error:', ttErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Transaksi Snap Midtrans berhasil dibuat.',
+      data: {
+        order_id: cleanOrderId,
+        token: snapTransaction.token,
+        snap_token: snapTransaction.token,
+        redirect_url: snapTransaction.redirect_url,
+        gross_amount: finalGrossAmount,
+        subtotal: subtotal,
+        discount_amount: discountAmount,
+        coupon_code: appliedCoupon ? appliedCoupon.code : null,
+      },
+      token: snapTransaction.token,
+      snap_token: snapTransaction.token,
+      redirect_url: snapTransaction.redirect_url,
+    });
+  } catch (err: any) {
+    console.error('[paymentController] createTransaction error:', err.message);
+    return res.status(500).json({
+      success: false,
+      message: `Gagal membuat transaksi Snap: ${err.message}`,
     });
   }
 };

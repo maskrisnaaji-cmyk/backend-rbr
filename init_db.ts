@@ -29,19 +29,41 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS coupons (
       id INT AUTO_INCREMENT PRIMARY KEY,
       code VARCHAR(50) NOT NULL UNIQUE,
-      description VARCHAR(255) NOT NULL,
+      \`desc\` VARCHAR(255) NULL,
+      description VARCHAR(255) NULL,
+      discount_type VARCHAR(20) NOT NULL DEFAULT 'percent',
+      discount_value INT NOT NULL DEFAULT 0,
+      target_member VARCHAR(20) NOT NULL DEFAULT 'all',
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
       status VARCHAR(30) NOT NULL DEFAULT 'Aktif',
       theme VARCHAR(20) NOT NULL DEFAULT 'maroon',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
-  const [couponCount] = await pool.query('SELECT COUNT(*) AS count FROM coupons');
+  try {
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS `desc` VARCHAR(255) NULL");
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS description VARCHAR(255) NULL");
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS discount_type VARCHAR(20) NOT NULL DEFAULT 'percent'");
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS discount_value INT NOT NULL DEFAULT 0");
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS target_member VARCHAR(20) NOT NULL DEFAULT 'all'");
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS is_active TINYINT(1) NOT NULL DEFAULT 1");
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'Aktif'");
+    await pool.query("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS theme VARCHAR(20) NOT NULL DEFAULT 'maroon'");
+    await pool.query("UPDATE coupons SET `desc` = description WHERE (`desc` IS NULL OR `desc` = '') AND description IS NOT NULL");
+    await pool.query("UPDATE coupons SET description = `desc` WHERE (description IS NULL OR description = '') AND `desc` IS NOT NULL");
+    await pool.query("UPDATE coupons SET discount_type = 'percent', discount_value = 20 WHERE code = 'BUDAYAKU20' AND (discount_value = 0 OR discount_value IS NULL)");
+    await pool.query("UPDATE coupons SET discount_type = 'fixed', discount_value = 10000 WHERE code = 'KOPIKULTUR' AND (discount_value = 0 OR discount_value IS NULL)");
+  } catch (cErr: any) {
+    console.log('Catatan ALTER coupons:', cErr.message);
+  }
+
+  const [couponCount]: any = await pool.query('SELECT COUNT(*) AS count FROM coupons');
   if (couponCount[0].count === 0) {
     await pool.query(
-      `INSERT INTO coupons (code, description, status, theme) VALUES
-       ('BUDAYAKU20', 'Diskon 20% untuk Tiket Event Budaya', 'Aktif', 'maroon'),
-       ('KOPIKULTUR', 'Potongan Rp 10.000 untuk transaksi Kedai', 'Aktif', 'amber')`
+      `INSERT INTO coupons (code, \`desc\`, description, discount_type, discount_value, target_member, is_active, status, theme) VALUES
+       ('BUDAYAKU20', 'Diskon 20% untuk Tiket Event Budaya', 'Diskon 20% untuk Tiket Event Budaya', 'percent', 20, 'all', 1, 'Aktif', 'maroon'),
+       ('KOPIKULTUR', 'Potongan Rp 10.000 untuk transaksi Kedai', 'Potongan Rp 10.000 untuk transaksi Kedai', 'fixed', 10000, 'all', 1, 'Aktif', 'amber')`
     );
   }
 
@@ -217,12 +239,19 @@ async function initDb() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
-  // Pastikan tabel users memiliki security_pin
+  // Pastikan tabel users memiliki is_verified dan security_pin
   try {
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified TINYINT(1) NOT NULL DEFAULT 0");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS security_pin VARCHAR(50) DEFAULT 'RBR2026'");
+    await pool.query("UPDATE users SET is_verified = 0 WHERE is_verified IS NULL");
     await pool.query("UPDATE users SET security_pin = 'RBR2026' WHERE security_pin IS NULL");
-  } catch (err) {
-    console.log('Kolom users security_pin sudah ada:', err.message);
+    console.log('✅ Kolom users is_verified & security_pin siap.');
+  } catch (err: any) {
+    if (err.code === 'ER_DUP_FIELDNAME' || err.message?.includes('Duplicate column')) {
+      console.log('Kolom users is_verified/security_pin sudah ada.');
+    } else {
+      console.log('Catatan ALTER users:', err.message);
+    }
   }
 
   // Pastikan tabel orders ada untuk tracking pesanan kedai

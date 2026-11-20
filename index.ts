@@ -20,6 +20,7 @@ import loanRoutes from './routes/loanRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import orderRoutes from './routes/orderRoutes';
 import couponRoutes from './routes/couponRoutes';
+import userRoutes from './routes/userRoutes';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -105,6 +106,8 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/orders',       orderRoutes);
 app.use('/api/kedai/orders', orderRoutes);
 app.use('/api/coupons',      couponRoutes);
+app.use('/api/users',        userRoutes);
+app.use('/api/members',      userRoutes);
 
 // ════════════════════════════════════════════════════════════════
 // 6. 404 HANDLER

@@ -175,8 +175,12 @@ async function initDb() {
       member_name VARCHAR(150) NOT NULL,
       member_email VARCHAR(150) NULL,
       borrow_date DATE NOT NULL,
+      borrow_at DATETIME NULL,
       due_date DATE NOT NULL,
       status VARCHAR(30) NOT NULL DEFAULT 'active',
+      request_status VARCHAR(30) NOT NULL DEFAULT 'none',
+      request_requested_at DATETIME NULL,
+      request_reviewed_at DATETIME NULL,
       extension_status VARCHAR(30) NOT NULL DEFAULT 'none',
       extension_days INT NULL,
       extension_requested_at DATETIME NULL,
@@ -189,6 +193,23 @@ async function initDb() {
       INDEX idx_book_loans_extension (extension_status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  try {
+    await pool.query("ALTER TABLE book_loans ADD COLUMN IF NOT EXISTS request_status VARCHAR(30) NOT NULL DEFAULT 'none'");
+    await pool.query("ALTER TABLE book_loans ADD COLUMN IF NOT EXISTS request_requested_at DATETIME NULL");
+    await pool.query("ALTER TABLE book_loans ADD COLUMN IF NOT EXISTS request_reviewed_at DATETIME NULL");
+    await pool.query("ALTER TABLE book_loans ADD COLUMN IF NOT EXISTS borrow_at DATETIME NULL");
+  } catch (err) {
+    console.log('Kolom request peminjaman sudah ada atau tidak perlu diubah:', err.message);
+  }
+
+  // Migrasi waktu peminjaman tetap dijalankan terpisah agar tidak terlewati
+  // ketika salah satu kolom migrasi lama sudah ada di database.
+  try {
+    await pool.query("ALTER TABLE book_loans ADD COLUMN IF NOT EXISTS borrow_at DATETIME NULL");
+  } catch (err) {
+    console.log('Kolom borrow_at sudah ada atau tidak dapat ditambahkan:', err.message);
+  }
 
   // Pastikan tabel users memiliki security_pin
   try {
@@ -205,10 +226,27 @@ async function initDb() {
       table_number VARCHAR(50) NOT NULL,
       items TEXT NOT NULL,
       total VARCHAR(50) NOT NULL,
+      total_price INT NOT NULL DEFAULT 0,
+      items_json TEXT NULL,
+      items_summary TEXT NULL,
       status VARCHAR(50) NOT NULL DEFAULT 'menunggu',
+      order_status VARCHAR(50) NOT NULL DEFAULT 'menunggu',
+      payment_status VARCHAR(20) NOT NULL DEFAULT 'UNPAID',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       time VARCHAR(50) NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  try {
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_price INT NOT NULL DEFAULT 0");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_json TEXT NULL");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_summary TEXT NULL");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_status VARCHAR(50) NOT NULL DEFAULT 'menunggu'");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) NOT NULL DEFAULT 'UNPAID'");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+  } catch (orderErr) {
+    console.log('Kolom orders sudah ada atau tidak dapat ditambahkan:', orderErr.message);
+  }
 
   // Buat view alias SQL jika ada query yang menggunakan nama tabel alternatif
   try {

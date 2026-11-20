@@ -244,6 +244,10 @@ const checkStatus = async (req, res) => {
           `UPDATE ticket_transactions SET status = 'Lunas' WHERE order_id = ?`,
           [orderId]
         );
+        await pool.execute(
+          `UPDATE orders SET payment_status = 'PAID' WHERE id = ?`,
+          [orderId]
+        ).catch(() => {});
       }
     } catch (midtransErr) {
       // Tangani error 404 ("Transaction doesn't exist") secara aman tanpa melempar status 500
@@ -351,6 +355,13 @@ const handleNotification = async (req, res) => {
         `UPDATE ticket_transactions SET status = ? WHERE order_id = ?`,
         [ticketStatus, orderId]
       );
+
+      if (orderStatus === 'paid') {
+        await pool.execute(
+          `UPDATE orders SET payment_status = 'PAID' WHERE id = ?`,
+          [orderId]
+        ).catch(() => {});
+      }
 
       if (orderStatus === 'paid') {
         try {

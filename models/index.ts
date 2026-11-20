@@ -7,3 +7,4 @@ export * from './loanModel';
 export * from './couponModel';
 export * from './notificationModel';
 export * from './transactionModel';
+export * from './dashboardModel';

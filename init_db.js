@@ -38,8 +38,12 @@ async function initDb() {
   }
 
   // 2. Pastikan tabel events lengkap
-  await pool.query(`DROP TABLE IF EXISTS events;`);
-  await pool.query(`
+await pool.query('SET FOREIGN_KEY_CHECKS = 0;');
+await pool.query('DROP TABLE IF EXISTS event_presale_tiers;');
+await pool.query('DROP TABLE IF EXISTS events;');
+await pool.query('SET FOREIGN_KEY_CHECKS = 1;');
+
+await pool.query(`
     CREATE TABLE IF NOT EXISTS events (
       id INT AUTO_INCREMENT PRIMARY KEY,
       title VARCHAR(150) NOT NULL,

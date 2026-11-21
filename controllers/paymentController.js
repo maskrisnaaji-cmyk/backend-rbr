@@ -51,6 +51,63 @@ const createCharge = async (req, res) => {
     const pt = (payment_type || '').toLowerCase();
     const bankName = (bank || 'bca').toLowerCase();
 
+    // Penanganan khusus pembayaran Tunai Kasir / Loket (tidak perlu panggil Midtrans)
+    const isCash = pt === 'cash' || pt.includes('tunai') || pt.includes('kasir');
+    if (isCash) {
+      try {
+        await pool.execute(
+          `INSERT INTO transactions 
+            (order_id, gross_amount, payment_type, transaction_status, customer_name, customer_email, order_type, items_json)
+           VALUES (?, ?, 'cash', 'pending', ?, ?, ?, ?)`,
+          [
+            cleanOrderId,
+            amount,
+            customer_name || 'Pengunjung RBR',
+            customer_email || 'customer@rumahbudayaratna.id',
+            order_type || 'ticket',
+            items ? JSON.stringify(items) : null,
+          ]
+        );
+      } catch (dbErr) {
+        console.warn('[paymentController] Simpan transactions cash error:', dbErr.message);
+      }
+
+      if (order_type === 'ticket') {
+        try {
+          await pool.execute(
+            `INSERT INTO ticket_transactions 
+              (event_id, customer_name, customer_email, amount, status, order_id, payment_method)
+             VALUES (?, ?, ?, ?, 'Menunggu Pembayaran (Loket)', ?, 'cash')`,
+            [
+              event_id || null,
+              customer_name || 'Pengunjung RBR',
+              customer_email || 'customer@rumahbudayaratna.id',
+              amount,
+              cleanOrderId,
+            ]
+          );
+        } catch (ttErr) {
+          console.warn('[paymentController] Simpan ticket_transactions cash error:', ttErr.message);
+        }
+      }
+
+      await pool.execute(
+        `INSERT INTO audit_logs (action_performed, endpoint_target) VALUES (?, ?)`,
+        ['CASH_TRANSACTION', '/api/payment/charge']
+      ).catch(() => {});
+
+      return res.json({
+        success: true,
+        message: 'Pesanan tunai loket/kasir berhasil dicatat.',
+        data: {
+          order_id: cleanOrderId,
+          gross_amount: amount,
+          payment_type: 'cash',
+          transaction_status: 'pending',
+        },
+      });
+    }
+
     let chargeParameter = {
       transaction_details: {
         order_id: cleanOrderId,

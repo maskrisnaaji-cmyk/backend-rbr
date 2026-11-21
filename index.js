@@ -17,7 +17,8 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const loanRoutes = require('./routes/loanRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const orderRoutes = require('./routes/orderRoutes');
-const couponRoutes = require('./routes/couponRoutes');
+const couponRoutes   = require('./routes/couponRoutes');
+const presaleRoutes  = require('./routes/presaleRoutes');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -100,7 +101,8 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/loans', loanRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/orders', orderRoutes);
-app.use('/api/coupons', couponRoutes);
+app.use('/api/coupons',  couponRoutes);
+app.use('/api/presale', presaleRoutes);
 
 // ════════════════════════════════════════════════════════════════
 // 6. 404 HANDLER

@@ -15,6 +15,23 @@ export interface User {
   status?: string;
 }
 
+/**
+ * Older databases may not have received the member-verification migration.
+ * Keep this operation idempotent without relying on ADD COLUMN IF NOT EXISTS,
+ * which is not supported consistently by all MySQL-compatible servers.
+ */
+const ensureVerificationColumn = async () => {
+  try {
+    await pool.query(
+      "ALTER TABLE users ADD COLUMN is_verified TINYINT(1) NOT NULL DEFAULT 0"
+    );
+  } catch (err: any) {
+    if (err.code !== 'ER_DUP_FIELDNAME' && !String(err.message || '').toLowerCase().includes('duplicate column')) {
+      throw err;
+    }
+  }
+};
+
 export const findUserEmailOnly = async (email: string) => {
   const [rows] = await pool.execute(
     'SELECT id FROM users WHERE email = ?',
@@ -115,28 +132,48 @@ export const searchUsers = async (keyword: string) => {
 };
 
 export const getAllMembers = async () => {
-  const [rows] = await pool.query(`
-    SELECT 
-      u.id, 
-      u.name, 
-      u.email, 
-      u.phone, 
-      u.role, 
-      COALESCE(u.is_verified, 0) AS is_verified,
-      u.createdAt,
-      (
-        (SELECT COUNT(*) FROM transactions t WHERE t.customer_email = u.email AND (t.order_type = 'kedai' OR t.order_type IS NULL)) +
-        (SELECT COUNT(*) FROM ticket_transactions tt WHERE tt.customer_email = u.email) +
-        (SELECT COUNT(*) FROM book_loans bl WHERE bl.member_id = u.id OR bl.member_email = u.email)
-      ) AS visit_count
-    FROM users u
-    WHERE u.role = 'user'
-    ORDER BY u.id DESC
-  `);
-  return rows as User[];
+  try {
+    // The activity tables and is_verified column are created by init_db. Keep
+    // the richer query as the fast path, but do not make the admin member list
+    // unusable when an older database has not run all migrations yet.
+    const [rows] = await pool.query(`
+      SELECT
+        u.id,
+        u.name,
+        u.email,
+        u.phone,
+        u.role,
+        COALESCE(u.is_verified, 0) AS is_verified,
+        u.createdAt,
+        (
+          (SELECT COUNT(*) FROM transactions t WHERE t.customer_email = u.email AND (t.order_type = 'kedai' OR t.order_type IS NULL)) +
+          (SELECT COUNT(*) FROM ticket_transactions tt WHERE tt.customer_email = u.email) +
+          (SELECT COUNT(*) FROM book_loans bl WHERE bl.member_id = u.id OR bl.member_email = u.email)
+        ) AS visit_count
+      FROM users u
+      WHERE u.role = 'user'
+      ORDER BY u.id DESC
+    `);
+    return rows as User[];
+  } catch (err: any) {
+    console.warn('[getAllMembers] Falling back to the core users query:', err.message);
+
+    // Compatibility path for databases created before the member/activity
+    // migrations. The member page can still load and verification remains
+    // available once the users table contains is_verified.
+    const [rows] = await pool.query(`
+      SELECT id, name, email, NULL AS phone, role,
+             0 AS is_verified, NULL AS createdAt, 0 AS visit_count
+      FROM users
+      WHERE role = 'user'
+      ORDER BY id DESC
+    `);
+    return rows as User[];
+  }
 };
 
 export const getUserById = async (id: number | string) => {
+  await ensureVerificationColumn();
   const [rows] = await pool.execute(
     'SELECT id, name, email, phone, role, is_verified, createdAt FROM users WHERE id = ?',
     [id]
@@ -154,6 +191,7 @@ export const getUserByEmail = async (email: string) => {
 
 export const updateUserVerification = async (id: number | string, isVerified: number | boolean | string) => {
   const statusVal = (isVerified === true || isVerified === 1 || String(isVerified) === '1' || String(isVerified) === 'true') ? 1 : 0;
+  await ensureVerificationColumn();
   const [result] = await pool.execute(
     'UPDATE users SET is_verified = ? WHERE id = ?',
     [statusVal, id]

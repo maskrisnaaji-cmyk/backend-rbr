@@ -15,10 +15,41 @@ export interface Coupon {
 }
 
 export const getAllCoupons = async () => {
-  const [rows] = await pool.query(
-    'SELECT id, code, `desc`, COALESCE(`desc`, description) AS description, discount_type, discount_value, target_member, is_active, status, theme, created_at FROM coupons ORDER BY id ASC'
-  );
-  return rows as Coupon[];
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, code, `desc`, COALESCE(`desc`, description) AS description, discount_type, discount_value, target_member, is_active, status, theme, created_at FROM coupons ORDER BY id ASC'
+    );
+    return rows as Coupon[];
+  } catch (err: any) {
+    console.warn('[getAllCoupons] Falling back to the legacy coupons query:', err.message);
+
+    // Older installations may have only the original code/description
+    // columns. Keep the admin page readable until init_db has migrated them.
+    try {
+      const [rows] = await pool.query(
+        `SELECT id, code, description AS \`desc\`, description,
+                'percent' AS discount_type, 0 AS discount_value,
+                'all' AS target_member, 1 AS is_active,
+                'Aktif' AS status, 'maroon' AS theme,
+                NULL AS created_at
+         FROM coupons ORDER BY id ASC`
+      );
+      return rows as Coupon[];
+    } catch (legacyErr: any) {
+      console.warn('[getAllCoupons] Legacy query failed:', legacyErr.message);
+
+      // A different early schema used `desc` instead of `description`.
+      const [rows] = await pool.query(
+        `SELECT id, code, \`desc\`, \`desc\` AS description,
+                'percent' AS discount_type, 0 AS discount_value,
+                'all' AS target_member, 1 AS is_active,
+                'Aktif' AS status, 'maroon' AS theme,
+                NULL AS created_at
+         FROM coupons ORDER BY id ASC`
+      );
+      return rows as Coupon[];
+    }
+  }
 };
 
 export const createCoupon = async (

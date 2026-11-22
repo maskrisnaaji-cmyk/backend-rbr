@@ -6,23 +6,7 @@ import rateLimit from 'express-rate-limit';
 import path from 'path';
 import dotenv from 'dotenv';
 
-<<<<<<< HEAD:index.js
-const authRoutes    = require('./routes/authRoutes');
-const menuRoutes    = require('./routes/menuRoutes');
-const eventRoutes   = require('./routes/eventRoutes');
-const bookRoutes    = require('./routes/bookRoutes');
-const searchRoutes  = require('./routes/searchRoutes');
-const uploadRoute   = require('./routes/uploadRoute');
-const aiRoutes      = require('./routes/aiRoutes');
-const paymentRoutes = require('./routes/paymentRoutes');
-const loanRoutes = require('./routes/loanRoutes');
-const notificationRoutes = require('./routes/notificationRoutes');
-const orderRoutes = require('./routes/orderRoutes');
-const couponRoutes = require('./routes/couponRoutes');
-const kedaiRoutes = require('./routes/kedaiRoutes');
-=======
 dotenv.config({ path: path.resolve(__dirname, '.env') });
->>>>>>> 1bb919c87b8229b60ed1f4e8a64482d59750bc80:index.ts
 
 import authRoutes from './routes/authRoutes';
 import menuRoutes from './routes/menuRoutes';
@@ -121,13 +105,6 @@ app.use('/api/ai',          aiRoutes);
 app.use('/api/payment',     paymentRoutes);
 app.use('/api/loans',       loanRoutes);
 app.use('/api/notifications', notificationRoutes);
-<<<<<<< HEAD:index.js
-app.use('/api/orders', orderRoutes);
-app.use('/api/coupons', couponRoutes);
-app.use('/api/kedai', kedaiRoutes);
-// Alias khusus kedai dipakai mobile app dan dashboard admin.
-app.use('/api/kedai/menus', menuRoutes);
-=======
 app.use('/api/orders',       orderRoutes);
 app.use('/api/kedai/orders', orderRoutes);
 app.use('/api/coupons',      couponRoutes);
@@ -135,7 +112,6 @@ app.use('/api/users',        userRoutes);
 app.use('/api/members',      userRoutes);
 app.use('/api/dashboard',    dashboardRoutes);
 app.use('/api/presale', presaleRoutes);
->>>>>>> 1bb919c87b8229b60ed1f4e8a64482d59750bc80:index.ts
 
 // ════════════════════════════════════════════════════════════════
 // 6. 404 HANDLER

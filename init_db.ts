@@ -243,7 +243,6 @@ async function initDb() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
-<<<<<<< HEAD:init_db.js
   try {
     await pool.query("ALTER TABLE book_loans ADD COLUMN IF NOT EXISTS request_status VARCHAR(30) NOT NULL DEFAULT 'none'");
     await pool.query("ALTER TABLE book_loans ADD COLUMN IF NOT EXISTS request_requested_at DATETIME NULL");
@@ -261,10 +260,7 @@ async function initDb() {
     console.log('Kolom borrow_at sudah ada atau tidak dapat ditambahkan:', err.message);
   }
 
-  // Pastikan tabel users memiliki security_pin
-=======
   // Pastikan tabel users memiliki is_verified dan security_pin
->>>>>>> 1bb919c87b8229b60ed1f4e8a64482d59750bc80:init_db.ts
   try {
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified TINYINT(1) NOT NULL DEFAULT 0");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS security_pin VARCHAR(50) DEFAULT 'RBR2026'");
@@ -283,22 +279,12 @@ async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS orders (
       id VARCHAR(50) PRIMARY KEY,
-      order_code VARCHAR(50) NOT NULL,
+      order_code VARCHAR(50) NULL,
       table_number VARCHAR(50) NOT NULL,
-<<<<<<< HEAD:init_db.js
-      items TEXT NOT NULL,
-      total VARCHAR(50) NOT NULL,
+      items LONGTEXT NOT NULL,
       total_price INT NOT NULL DEFAULT 0,
       items_json TEXT NULL,
       items_summary TEXT NULL,
-      status VARCHAR(50) NOT NULL DEFAULT 'menunggu',
-      order_status VARCHAR(50) NOT NULL DEFAULT 'menunggu',
-      payment_status VARCHAR(20) NOT NULL DEFAULT 'UNPAID',
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      time VARCHAR(50) NOT NULL
-=======
-      items LONGTEXT NOT NULL,
-      total_price INT NOT NULL DEFAULT 0,
       total VARCHAR(50) NULL,
       payment_status VARCHAR(20) NOT NULL DEFAULT 'UNPAID',
       order_status VARCHAR(50) NOT NULL DEFAULT 'Menunggu',
@@ -306,31 +292,23 @@ async function initDb() {
       time VARCHAR(50) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
->>>>>>> 1bb919c87b8229b60ed1f4e8a64482d59750bc80:init_db.ts
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 
   try {
-<<<<<<< HEAD:init_db.js
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_code VARCHAR(50) NULL");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_price INT NOT NULL DEFAULT 0");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_json TEXT NULL");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS items_summary TEXT NULL");
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_status VARCHAR(50) NOT NULL DEFAULT 'menunggu'");
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) NOT NULL DEFAULT 'UNPAID'");
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
-  } catch (orderErr) {
-    console.log('Kolom orders sudah ada atau tidak dapat ditambahkan:', orderErr.message);
-=======
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_code VARCHAR(50) NULL");
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_price INT NOT NULL DEFAULT 0");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) NOT NULL DEFAULT 'UNPAID'");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_status VARCHAR(50) NOT NULL DEFAULT 'Menunggu'");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS status VARCHAR(50) NOT NULL DEFAULT 'menunggu'");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS time VARCHAR(50) NULL");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
     await pool.query("UPDATE orders SET order_code = id WHERE order_code IS NULL OR order_code = ''");
   } catch (ordErr) {
     console.log('Kolom orders sudah ada atau tidak perlu diubah:', ordErr.message);
->>>>>>> 1bb919c87b8229b60ed1f4e8a64482d59750bc80:init_db.ts
   }
 
   // Buat view alias SQL jika ada query yang menggunakan nama tabel alternatif

@@ -7,12 +7,14 @@ export interface Order {
   items: string;
   total_price: number;
   total?: string | null;
-  payment_status: 'UNPAID' | 'PAID' | string;
-  order_status: 'Menunggu' | 'Disiapkan' | 'Selesai' | string;
-  status: 'menunggu' | 'disiapkan' | 'selesai' | 'diantar' | string;
+  payment_status: 'UNPAID' | 'PAID' | 'EXPIRED' | string;
+  order_status: 'Menunggu' | 'Disiapkan' | 'Selesai' | 'Batal (Kedaluwarsa)' | string;
+  status: 'menunggu' | 'disiapkan' | 'selesai' | 'diantar' | 'batal' | string;
+  payment_method?: string | null;
   time?: string | null;
   created_at?: Date | string;
   updated_at?: Date | string;
+  expired_at?: Date | string | null;
 }
 
 export const getAllOrdersQuery = async (sql: string, params: any[]) => {
@@ -37,34 +39,73 @@ export const insertOrUpdateOrder = async (
   initialPaymentStatus: string,
   initialOrderStatus: string,
   initialStatus: string,
-  orderTime: string
+  orderTime: string,
+  paymentMethod: string = 'kasir',
+  expiredAt: Date | string | null = null
 ) => {
-  const [result] = await pool.execute(
-    `INSERT INTO orders (id, order_code, table_number, items, total_price, total, payment_status, order_status, status, time)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       table_number = VALUES(table_number),
-       items = VALUES(items),
-       total_price = VALUES(total_price),
-       total = VALUES(total),
-       payment_status = VALUES(payment_status),
-       order_status = VALUES(order_status),
-       status = VALUES(status),
-       time = VALUES(time)`,
-    [
-      rowId,
-      rowId,
-      tableNum,
-      itemsJsonStr,
-      calcPrice,
-      totalFormatted,
-      initialPaymentStatus,
-      initialOrderStatus,
-      initialStatus,
-      orderTime,
-    ]
-  );
-  return result as any;
+  try {
+    const [result] = await pool.execute(
+      `INSERT INTO orders (id, order_code, table_number, items, total_price, total, payment_status, order_status, status, time, payment_method, expired_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         table_number = VALUES(table_number),
+         items = VALUES(items),
+         total_price = VALUES(total_price),
+         total = VALUES(total),
+         payment_status = VALUES(payment_status),
+         order_status = VALUES(order_status),
+         status = VALUES(status),
+         time = VALUES(time),
+         payment_method = VALUES(payment_method),
+         expired_at = VALUES(expired_at)`,
+      [
+        rowId,
+        rowId,
+        tableNum,
+        itemsJsonStr,
+        calcPrice,
+        totalFormatted,
+        initialPaymentStatus,
+        initialOrderStatus,
+        initialStatus,
+        orderTime,
+        paymentMethod,
+        expiredAt,
+      ]
+    );
+    return result as any;
+  } catch (err: any) {
+    // Fallback jika kolom expired_at / payment_method belum ada
+    if (err.code === 'ER_BAD_FIELD_ERROR' || err.message?.includes('Unknown column')) {
+      const [result] = await pool.execute(
+        `INSERT INTO orders (id, order_code, table_number, items, total_price, total, payment_status, order_status, status, time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           table_number = VALUES(table_number),
+           items = VALUES(items),
+           total_price = VALUES(total_price),
+           total = VALUES(total),
+           payment_status = VALUES(payment_status),
+           order_status = VALUES(order_status),
+           status = VALUES(status),
+           time = VALUES(time)`,
+        [
+          rowId,
+          rowId,
+          tableNum,
+          itemsJsonStr,
+          calcPrice,
+          totalFormatted,
+          initialPaymentStatus,
+          initialOrderStatus,
+          initialStatus,
+          orderTime,
+        ]
+      );
+      return result as any;
+    }
+    throw err;
+  }
 };
 
 export const payOrderById = async (targetId: any) => {

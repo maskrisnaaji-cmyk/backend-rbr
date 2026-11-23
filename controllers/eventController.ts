@@ -58,6 +58,11 @@ export function formatEventRow(r: any) {
     image: r.image || '',
     banner_image: r.banner_image || r.image || '',
     category: r.category || 'Budaya',
+    organizer_name: r.organizer_name || '',
+    organizer_contact: r.organizer_contact || '',
+    organizer_email: r.organizer_email || '',
+    description: r.description || '',
+    status_approval: r.status_approval || 'approved',
   };
 }
 
@@ -81,17 +86,31 @@ export const getAllEvents = async (req: Request, res: Response) => {
   try {
     await ensureBookedCountColumn();
 
-    const { month, date } = req.query as { month?: string; date?: string };
+    const { month, date, include_pending } = req.query as {
+      month?: string;
+      date?: string;
+      include_pending?: string;
+    };
+
     let query =
-      'SELECT id, title, date, time, location, price, quota, sold, booked_count, status, image, banner_image, category FROM events';
+      'SELECT id, title, date, time, location, price, quota, sold, booked_count, status, image, banner_image, category, organizer_name, organizer_contact, organizer_email, description, status_approval FROM events';
     const params: any[] = [];
+    const whereConditions: string[] = [];
+
+    if (include_pending !== 'true') {
+      whereConditions.push("(status_approval = 'approved' OR status_approval IS NULL)");
+    }
 
     if (date) {
-      query += ' WHERE date LIKE ?';
+      whereConditions.push('date LIKE ?');
       params.push(`%${date}%`);
     } else if (month) {
-      query += ' WHERE date LIKE ?';
+      whereConditions.push('date LIKE ?');
       params.push(`%${month}%`);
+    }
+
+    if (whereConditions.length > 0) {
+      query += ' WHERE ' + whereConditions.join(' AND ');
     }
 
     query += ' ORDER BY date ASC, id ASC';
@@ -107,11 +126,16 @@ export const getAllEvents = async (req: Request, res: Response) => {
         const [r] = await pool.query(query, params);
         rows = r as any[];
       } else {
-        throw queryErr;
+        // Fallback jika kolom baru belum ada di DB
+        const fallbackQuery = 'SELECT * FROM events ORDER BY date ASC, id ASC';
+        const [r] = await pool.query(fallbackQuery);
+        rows = r as any[];
       }
     }
 
-    res.json(rows.map(formatEventRow));
+    const formattedRows = rows.map(formatEventRow);
+    const enrichedRows = await Promise.all(formattedRows.map(enrichEventWithPresaleInfo));
+    res.json(enrichedRows);
   } catch (err) {
     console.error('[getAllEvents]', err);
     res.status(500).json({ message: 'Gagal mengambil data event/agenda.' });

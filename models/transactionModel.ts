@@ -20,6 +20,7 @@ export interface Transaction {
   items_json?: string | null;
   created_at?: Date | string;
   updated_at?: Date | string;
+  expired_at?: Date | string | null;
 }
 
 export interface TicketTransaction {
@@ -71,30 +72,60 @@ export const createTransaction = async (
   customerName: string | null,
   customerEmail: string | null,
   orderType: string,
-  itemsJson: string
+  itemsJson: string,
+  expiredAt: Date | string | null = null
 ) => {
-  const [result] = await pool.execute(
-    `INSERT INTO transactions 
-      (order_id, payment_type, payment_method, gross_amount, status, transaction_status, va_number, bank, qr_string, qr_url, customer_name, customer_email, order_type, items_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      orderId,
-      paymentType,
-      paymentMethod,
-      grossAmount,
-      status,
-      txStatus,
-      vaNumber,
-      bank,
-      qrString,
-      qrUrl,
-      customerName,
-      customerEmail,
-      orderType,
-      itemsJson,
-    ]
-  );
-  return result as any;
+  try {
+    const [result] = await pool.execute(
+      `INSERT INTO transactions 
+        (order_id, payment_type, payment_method, gross_amount, status, transaction_status, va_number, bank, qr_string, qr_url, customer_name, customer_email, order_type, items_json, expired_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        orderId,
+        paymentType,
+        paymentMethod,
+        grossAmount,
+        status,
+        txStatus,
+        vaNumber,
+        bank,
+        qrString,
+        qrUrl,
+        customerName,
+        customerEmail,
+        orderType,
+        itemsJson,
+        expiredAt,
+      ]
+    );
+    return result as any;
+  } catch (err: any) {
+    if (err.code === 'ER_BAD_FIELD_ERROR' || err.message?.includes('Unknown column')) {
+      const [result] = await pool.execute(
+        `INSERT INTO transactions 
+          (order_id, payment_type, payment_method, gross_amount, status, transaction_status, va_number, bank, qr_string, qr_url, customer_name, customer_email, order_type, items_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          orderId,
+          paymentType,
+          paymentMethod,
+          grossAmount,
+          status,
+          txStatus,
+          vaNumber,
+          bank,
+          qrString,
+          qrUrl,
+          customerName,
+          customerEmail,
+          orderType,
+          itemsJson,
+        ]
+      );
+      return result as any;
+    }
+    throw err;
+  }
 };
 
 export const createTicketTransaction = async (

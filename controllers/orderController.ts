@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import pool from '../config/db';
 import {
   getAllOrdersQuery,
   getOrderByIdOrCode,
@@ -8,6 +9,39 @@ import {
   deleteOrderByIdOrCode,
 } from '../models/orderModel';
 import { createNotification } from '../models/notificationModel';
+
+// ─── Helper: Auto-expire order kedai yang sudah melewati 30 menit ─────────────
+let isColumnsChecked = false;
+async function ensureOrderColumns() {
+  if (isColumnsChecked) return;
+  try {
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS expired_at TIMESTAMP NULL");
+    isColumnsChecked = true;
+  } catch (_) {
+    isColumnsChecked = true;
+  }
+}
+
+export async function autoExpireKedaiOrders() {
+  await ensureOrderColumns();
+  try {
+    await pool.query(`
+      UPDATE orders
+      SET payment_status = 'EXPIRED',
+          order_status = 'Batal (Kedaluwarsa)',
+          status = 'batal',
+          updated_at = NOW()
+      WHERE payment_status = 'UNPAID'
+        AND (
+          (expired_at IS NOT NULL AND expired_at < NOW())
+          OR (expired_at IS NULL AND created_at < NOW() - INTERVAL 30 MINUTE)
+        )
+    `);
+  } catch (err: any) {
+    console.warn('[autoExpireKedaiOrders] Warning:', err.message);
+  }
+}
 
 /**
  * Normalisasi items menjadi array terstruktur: [ { name, qty, price }, ... ]
@@ -79,11 +113,30 @@ export function formatOrderRow(row: any) {
   const totalPrice = Number(row.total_price) ||
     Number(String(row.total || '0').replace(/[^0-9]/g, '')) || 0;
 
-  const paymentStatus = (row.payment_status || 'UNPAID').toUpperCase();
-  const orderStatus = row.order_status || (
+  const now = new Date();
+  const createdAt = row.created_at ? new Date(row.created_at) : null;
+  const expiredAt = row.expired_at
+    ? new Date(row.expired_at)
+    : (createdAt ? new Date(createdAt.getTime() + 30 * 60 * 1000) : null);
+
+  const isPaid = (row.payment_status || 'UNPAID').toUpperCase() === 'PAID';
+  const isExpired = !isPaid && expiredAt ? now.getTime() > expiredAt.getTime() : false;
+  const remainingSeconds = !isPaid && expiredAt && !isExpired
+    ? Math.max(0, Math.floor((expiredAt.getTime() - now.getTime()) / 1000))
+    : 0;
+
+  let paymentStatus = (row.payment_status || 'UNPAID').toUpperCase();
+  if (isExpired && paymentStatus === 'UNPAID') {
+    paymentStatus = 'EXPIRED';
+  }
+
+  let orderStatus = row.order_status || (
     row.status === 'disiapkan' ? 'Disiapkan' :
     row.status === 'selesai' ? 'Selesai' : 'Menunggu'
   );
+  if (isExpired && (orderStatus === 'Menunggu' || row.status === 'menunggu')) {
+    orderStatus = 'Batal (Kedaluwarsa)';
+  }
 
   return {
     id: row.id,
@@ -94,11 +147,16 @@ export function formatOrderRow(row: any) {
     items_summary: itemsSummary,         // ringkasan string ramah UI
     total_price: totalPrice,
     total: row.total || `Rp ${totalPrice.toLocaleString('id-ID')}`,
-    payment_status: paymentStatus,       // 'UNPAID' | 'PAID'
-    order_status: orderStatus,           // 'Menunggu' | 'Disiapkan' | 'Selesai'
-    status: orderStatus.toLowerCase(),   // 'menunggu' | 'disiapkan' | 'selesai'
+    payment_status: paymentStatus,       // 'UNPAID' | 'PAID' | 'EXPIRED'
+    order_status: orderStatus,           // 'Menunggu' | 'Disiapkan' | 'Selesai' | 'Batal (Kedaluwarsa)'
+    status: orderStatus.toLowerCase(),   // 'menunggu' | 'disiapkan' | 'selesai' | 'batal'
+    payment_method: row.payment_method || 'Kasir',
     time: row.time || 'Baru saja',
-    created_at: row.created_at || null,
+    created_at: createdAt ? createdAt.toISOString() : null,
+    expired_at: expiredAt ? expiredAt.toISOString() : null,
+    expiry_duration_seconds: 1800,
+    is_expired: isExpired,
+    remaining_seconds: remainingSeconds,
   };
 }
 
@@ -109,6 +167,8 @@ export function formatOrderRow(row: any) {
  */
 export const getAllOrders = async (req: Request, res: Response) => {
   try {
+    await autoExpireKedaiOrders();
+
     const { status, all, payment_status } = req.query as { status?: string; all?: string; payment_status?: string };
 
     let sql = 'SELECT * FROM orders';
@@ -156,6 +216,8 @@ export const getAllOrders = async (req: Request, res: Response) => {
  */
 export const getOrderById = async (req: Request, res: Response) => {
   try {
+    await autoExpireKedaiOrders();
+
     const { id } = req.params;
     const rows = await getOrderByIdOrCode(id);
 
@@ -218,6 +280,12 @@ export const createOrder = async (req: Request, res: Response) => {
     const initialStatus = 'menunggu';
     const orderTime = time || 'Baru saja';
 
+    // ── Simpan waktu dibuat (created_at) & batas waktu 30 menit (expired_at) konsisten dari server
+    await ensureOrderColumns();
+    const serverCreatedAt = new Date();
+    const serverExpiredAt = new Date(serverCreatedAt.getTime() + 30 * 60 * 1000);
+    const paymentMethod = req.body.payment_method || (req.body.payment_type === 'qris' ? 'qris' : 'kasir');
+
     await insertOrUpdateOrder(
       rowId,
       tableNum,
@@ -227,7 +295,9 @@ export const createOrder = async (req: Request, res: Response) => {
       initialPaymentStatus,
       initialOrderStatus,
       initialStatus,
-      orderTime
+      orderTime,
+      paymentMethod,
+      serverExpiredAt
     );
 
     // Otomatis buat notifikasi pesanan baru
@@ -236,7 +306,7 @@ export const createOrder = async (req: Request, res: Response) => {
         null,
         rowId,
         'Pesanan Baru Dibuat',
-        `Pesanan ${rowId} (${tableNum}) berhasil dibuat: ${itemsSummary}. Menunggu proses pembayaran.`,
+        `Pesanan ${rowId} (${tableNum}) berhasil dibuat: ${itemsSummary}. Batas waktu pembayaran 30 menit.`,
         'order',
         'Pesanan Dibuat'
       );
@@ -247,7 +317,7 @@ export const createOrder = async (req: Request, res: Response) => {
     const created = await getOrderByIdOrCode(rowId);
     res.status(201).json({
       success: true,
-      message: 'Pesanan berhasil dibuat (Menunggu Pembayaran).',
+      message: 'Pesanan berhasil dibuat (Menunggu Pembayaran 30 Menit).',
       data: formatOrderRow(created[0]),
     });
   } catch (err) {

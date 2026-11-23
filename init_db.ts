@@ -133,6 +133,7 @@ async function initDb() {
 
   try {
     await pool.query("ALTER TABLE ticket_transactions ADD COLUMN IF NOT EXISTS order_id VARCHAR(100) NULL");
+    await pool.query("ALTER TABLE ticket_transactions ADD COLUMN IF NOT EXISTS quantity INT DEFAULT 1");
     await pool.query("ALTER TABLE ticket_transactions ADD COLUMN IF NOT EXISTS snap_token VARCHAR(255) NULL");
     await pool.query("ALTER TABLE ticket_transactions ADD COLUMN IF NOT EXISTS redirect_url VARCHAR(500) NULL");
     await pool.query("ALTER TABLE ticket_transactions ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
@@ -180,6 +181,7 @@ async function initDb() {
     await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS redirect_url VARCHAR(500) NULL");
     await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payment_response TEXT NULL");
     await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS items_json TEXT NULL");
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS expired_at TIMESTAMP NULL");
     await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
   } catch (tErr) {
@@ -304,6 +306,8 @@ async function initDb() {
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_status VARCHAR(50) NOT NULL DEFAULT 'Menunggu'");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS status VARCHAR(50) NOT NULL DEFAULT 'menunggu'");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS time VARCHAR(50) NULL");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS expired_at TIMESTAMP NULL");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
     await pool.query("UPDATE orders SET order_code = id WHERE order_code IS NULL OR order_code = ''");

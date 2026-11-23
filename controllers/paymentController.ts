@@ -28,6 +28,20 @@ const snap = new midtransClient.Snap({
   clientKey: process.env.MIDTRANS_CLIENT_KEY || 'SB-Mid-server-cNRPfg50s3Xc.ZQuesNEDHdv',
 });
 
+// ─── Helper: pastikan kolom expired_at & payment_method tersedia di tabel ───────
+let isTxColumnsChecked = false;
+async function ensureTransactionColumns() {
+  if (isTxColumnsChecked) return;
+  try {
+    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS expired_at TIMESTAMP NULL");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS expired_at TIMESTAMP NULL");
+    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
+    isTxColumnsChecked = true;
+  } catch (_) {
+    isTxColumnsChecked = true;
+  }
+}
+
 /**
  * Helper untuk memvalidasi kupon promo dan menghitung nilai diskon:
  * - Memeriksa keberadaan kode kupon (case-insensitive)
@@ -192,8 +206,86 @@ export const createCharge = async (req: Request, res: Response) => {
       ? String(order_id).trim().replace(/[^a-zA-Z0-9\-_]/g, '')
       : `RBR-${(order_type || 'ORD').toUpperCase()}-${Date.now()}`;
 
-    const pt = (payment_type || '').toLowerCase();
+    const rawOrderType = (order_type || '').toLowerCase().trim();
+    const isKedai = rawOrderType === 'kedai' ||
+                    cleanOrderId.toUpperCase().startsWith('RBR-KEDAI') ||
+                    cleanOrderId.toUpperCase().startsWith('RBR-ORD') ||
+                    (!rawOrderType && !event_id);
+
+    const pt = (payment_type || '').toLowerCase().trim();
+    const isQris = pt === 'qris' || pt.includes('qris');
+    const isCash = ['cash', 'kasir', 'tunai', 'bayar_di_kasir', 'bayar_kasir'].includes(pt);
     const bankName = (bank || 'bca').toLowerCase();
+
+    // ── ATURAN 1: Untuk transaksi Kedai, HANYA QRIS dan Bayar di Kasir yang didukung ──
+    if (isKedai && !isQris && !isCash) {
+      return res.status(400).json({
+        success: false,
+        message: "Metode pembayaran tidak valid untuk pesanan Kedai. Hanya metode 'QRIS' dan 'Bayar di Kasir' yang didukung.",
+      });
+    }
+
+    // ── ATURAN 2: Simpan waktu server konsisten & batas waktu pembayaran 30 menit ──────
+    await ensureTransactionColumns();
+    const createdAt = new Date();
+    const expiredAt = new Date(createdAt.getTime() + 30 * 60 * 1000);
+
+    // ── Penanganan Khusus: "Bayar di Kasir" (Cash) untuk Kedai ────────────────────────
+    if (isCash) {
+      try {
+        await createTransactionModel(
+          cleanOrderId,
+          'cash',
+          'kasir',
+          finalAmount,
+          'pending',
+          'pending',
+          null,
+          'kasir',
+          null,
+          null,
+          customer_name || 'Pengunjung Kedai RBR',
+          customer_email || 'customer@rumahbudayaratna.id',
+          'kedai',
+          items ? JSON.stringify(items) : '',
+          expiredAt
+        );
+      } catch (dbErr: any) {
+        console.warn('[paymentController] Simpan transactions (kasir) error:', dbErr.message);
+      }
+
+      try {
+        await pool.query(
+          `UPDATE orders
+           SET payment_method = 'kasir',
+               expired_at = COALESCE(expired_at, ?),
+               updated_at = NOW()
+           WHERE id = ? OR order_code = ?`,
+          [expiredAt, cleanOrderId, cleanOrderId]
+        );
+      } catch (_) {}
+
+      return res.status(200).json({
+        success: true,
+        message: 'Pesanan dengan metode Bayar di Kasir berhasil dibuat. Silakan lakukan pembayaran di kasir dalam 30 menit.',
+        data: {
+          order_id: cleanOrderId,
+          payment_type: 'cash',
+          payment_method: 'Bayar di Kasir',
+          gross_amount: finalAmount,
+          subtotal: amount,
+          discount_amount: discountAmount,
+          coupon_code: appliedCoupon ? appliedCoupon.code : null,
+          transaction_status: 'pending',
+          status: 'pending',
+          created_at: createdAt.toISOString(),
+          expired_at: expiredAt.toISOString(),
+          expiry_duration_seconds: 1800,
+          is_expired: false,
+          is_paid: false,
+        },
+      });
+    }
 
     let chargeParameter: any = {
       transaction_details: {
@@ -226,13 +318,16 @@ export const createCharge = async (req: Request, res: Response) => {
       }
     }
 
-    // Susun parameter sesuai Core API Midtrans
-    let isQris = pt === 'qris' || pt.includes('qris');
+    // Susun parameter sesuai Core API Midtrans (QRIS dengan batas waktu 30 menit)
     if (isQris) {
       chargeParameter.payment_type = 'qris';
       chargeParameter.qris = { acquirer: 'gopay' };
+      chargeParameter.custom_expiry = {
+        expiry_duration: 30,
+        unit: 'minute',
+      };
     } else {
-      // Bank Transfer VA
+      // Bank Transfer VA (hanya untuk tiket atau modul lain yang relevan)
       if (bankName === 'mandiri' || bankName === 'echannel') {
         chargeParameter.payment_type = 'echannel';
         chargeParameter.echannel = {
@@ -290,11 +385,26 @@ export const createCharge = async (req: Request, res: Response) => {
         extractedQrUrl || null,
         customer_name || 'Pengunjung RBR',
         customer_email || 'customer@rumahbudayaratna.id',
-        order_type || 'kedai',
-        chargeParameter.item_details ? JSON.stringify(chargeParameter.item_details) : (items ? JSON.stringify(items) : '')
+        order_type || (isKedai ? 'kedai' : 'ticket'),
+        chargeParameter.item_details ? JSON.stringify(chargeParameter.item_details) : (items ? JSON.stringify(items) : ''),
+        expiredAt
       );
     } catch (dbErr: any) {
       console.warn('[paymentController] Simpan transactions error:', dbErr.message);
+    }
+
+    // Jika pesanan kedai, sinkronkan payment_method dan expired_at ke tabel orders
+    if (isKedai) {
+      try {
+        await pool.query(
+          `UPDATE orders
+           SET payment_method = 'qris',
+               expired_at = COALESCE(expired_at, ?),
+               updated_at = NOW()
+           WHERE id = ? OR order_code = ?`,
+          [expiredAt, cleanOrderId, cleanOrderId]
+        );
+      } catch (_) {}
     }
 
     // Jika transaksi adalah tiket acara, simpan ke ticket_transactions
@@ -321,15 +431,19 @@ export const createCharge = async (req: Request, res: Response) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Transaksi Midtrans Core API berhasil dibuat.',
+      message: isQris
+        ? 'Transaksi QRIS Midtrans berhasil dibuat.'
+        : 'Transaksi Midtrans Core API berhasil dibuat.',
       data: {
         order_id: cleanOrderId,
         payment_type: chargeParameter.payment_type,
+        payment_method: isQris ? 'qris' : `va_${bankName}`,
         gross_amount: finalAmount,
         subtotal: amount,
         discount_amount: discountAmount,
         coupon_code: appliedCoupon ? appliedCoupon.code : null,
         transaction_status: chargeResponse.transaction_status || 'pending',
+        status: 'pending',
         va_number: extractedVaNumber,
         bill_key: extractedBillKey,
         biller_code: extractedBillerCode,
@@ -337,6 +451,11 @@ export const createCharge = async (req: Request, res: Response) => {
         qr_string: extractedQrString,
         qr_url: extractedQrUrl,
         actions: chargeResponse.actions || [],
+        created_at: createdAt.toISOString(),
+        expired_at: expiredAt.toISOString(),
+        expiry_duration_seconds: 1800,
+        is_expired: false,
+        is_paid: false,
         raw: chargeResponse,
       },
     });
@@ -552,65 +671,133 @@ export const checkStatus = async (req: Request, res: Response) => {
       });
     }
 
-    let statusResponse: any = null;
-    let isPaid = false;
-    let txStatus = 'pending';
+    await ensureTransactionColumns();
 
-    try {
-      statusResponse = await coreApi.transaction.status(orderId);
-      txStatus = statusResponse.transaction_status || 'pending';
-      const fraudStatus = statusResponse.fraud_status;
-
-      if (txStatus === 'settlement' || (txStatus === 'capture' && fraudStatus === 'accept')) {
-        isPaid = true;
-        txStatus = 'settlement';
-      } else if (['cancel', 'deny', 'expire'].includes(txStatus)) {
-        txStatus = 'failed';
-      }
-
-      // Jika terdeteksi lunas, sinkronkan ke database MySQL
-      if (isPaid) {
-        await updateTransactionSettlement(statusResponse, orderId);
-        await updateTicketTransactionPaid(orderId);
-      }
-    } catch (midtransErr: any) {
-      // Tangani error 404 ("Transaction doesn't exist") secara aman tanpa melempar status 500
-      const errMsg = midtransErr?.message || String(midtransErr);
-      const is404 =
-        midtransErr?.status === 404 ||
-        midtransErr?.httpStatusCode === 404 ||
-        /404|doesn't exist|does not exist|not found/i.test(errMsg);
-
-      if (is404) {
-        console.log(`[paymentController] Transaksi ${orderId} belum tercatat di server Midtrans. Status: pending.`);
-      } else {
-        console.warn(`[paymentController] Cek status Midtrans terkendala: ${errMsg}`);
-      }
-    }
-
-    // Periksa status lokal di database MySQL
+    // 1. Periksa status lokal di database MySQL terlebih dahulu
     const rows = await getTransactionByOrderId(orderId);
     const tx: any = rows[0] || null;
 
-    if (tx && (tx.transaction_status === 'settlement' || tx.status === 'paid')) {
-      isPaid = true;
-      txStatus = 'settlement';
+    const now = new Date();
+    const txCreatedAt = tx?.created_at ? new Date(tx.created_at) : null;
+    const txExpiredAt = tx?.expired_at
+      ? new Date(tx.expired_at)
+      : (txCreatedAt ? new Date(txCreatedAt.getTime() + 30 * 60 * 1000) : null);
+
+    const isPastExpiry = txExpiredAt ? now.getTime() > txExpiredAt.getTime() : false;
+    let isPaid = tx ? (tx.transaction_status === 'settlement' || tx.status === 'paid') : false;
+    let isExpired = false;
+    let txStatus = isPaid ? 'settlement' : (tx?.transaction_status || 'pending');
+    let statusResponse: any = null;
+
+    // 2. Jika belum lunas lokal, cek status ke Midtrans API
+    if (!isPaid) {
+      try {
+        statusResponse = await coreApi.transaction.status(orderId);
+        const midtransTxStatus = statusResponse.transaction_status || 'pending';
+        const fraudStatus = statusResponse.fraud_status;
+
+        if (midtransTxStatus === 'settlement' || (midtransTxStatus === 'capture' && fraudStatus === 'accept')) {
+          isPaid = true;
+          txStatus = 'settlement';
+        } else if (['cancel', 'deny', 'expire'].includes(midtransTxStatus)) {
+          txStatus = midtransTxStatus === 'expire' ? 'expire' : 'failed';
+        } else {
+          txStatus = midtransTxStatus;
+        }
+      } catch (midtransErr: any) {
+        const errMsg = midtransErr?.message || String(midtransErr);
+        const is404 =
+          midtransErr?.status === 404 ||
+          midtransErr?.httpStatusCode === 404 ||
+          /404|doesn't exist|does not exist|not found/i.test(errMsg);
+
+        if (is404) {
+          console.log(`[paymentController] Transaksi ${orderId} belum tercatat di server Midtrans. Status: pending.`);
+        } else {
+          console.warn(`[paymentController] Cek status Midtrans terkendala: ${errMsg}`);
+        }
+      }
     }
+
+    // 3. Evaluasi kedaluwarsa 30 menit jika transaksi belum dibayar
+    if (!isPaid) {
+      if (isPastExpiry || txStatus === 'expire' || tx?.transaction_status === 'expire') {
+        isExpired = true;
+        txStatus = 'expire';
+
+        try {
+          await pool.execute(
+            "UPDATE transactions SET status = 'failed', transaction_status = 'expire', updated_at = NOW() WHERE order_id = ?",
+            [orderId]
+          );
+          await pool.execute(
+            "UPDATE orders SET payment_status = 'EXPIRED', order_status = 'Batal (Kedaluwarsa)', status = 'batal', updated_at = NOW() WHERE (id = ? OR order_code = ?) AND payment_status = 'UNPAID'",
+            [orderId, orderId]
+          );
+        } catch (dbSyncErr: any) {
+          console.warn('[paymentController] Gagal update status expire:', dbSyncErr.message);
+        }
+      }
+    }
+
+    // 4. Jika terdeteksi lunas, sinkronkan ke database MySQL (transactions, orders, tickets)
+    if (isPaid) {
+      try {
+        if (statusResponse) {
+          await updateTransactionSettlement(statusResponse, orderId);
+        } else {
+          await pool.execute(
+            "UPDATE transactions SET status = 'paid', transaction_status = 'settlement', updated_at = NOW() WHERE order_id = ?",
+            [orderId]
+          );
+        }
+        await updateTicketTransactionPaid(orderId);
+
+        // Sinkronkan ke pesanan kedai agar langsung masuk antrean 'Disiapkan'
+        await pool.execute(
+          `UPDATE orders
+           SET payment_status = 'PAID',
+               order_status = 'Disiapkan',
+               status = 'disiapkan',
+               updated_at = NOW()
+           WHERE (id = ? OR order_code = ?) AND payment_status != 'PAID'`,
+          [orderId, orderId]
+        );
+      } catch (paidSyncErr: any) {
+        console.warn('[paymentController] Gagal sinkron status paid:', paidSyncErr.message);
+      }
+    }
+
+    const remainingSeconds = !isPaid && txExpiredAt && !isExpired
+      ? Math.max(0, Math.floor((txExpiredAt.getTime() - now.getTime()) / 1000))
+      : 0;
 
     return res.status(200).json({
       success: true,
       status: {
-        transaction_status: isPaid ? 'settlement' : txStatus,
+        transaction_status: txStatus,
         is_paid: isPaid,
+        is_expired: isExpired,
         order_id: orderId,
         payment_type: tx ? (tx.payment_type || tx.payment_method) : null,
         gross_amount: tx ? tx.gross_amount : null,
         va_number: tx ? tx.va_number : null,
+        qr_string: tx ? tx.qr_string : null,
+        qr_url: tx ? tx.qr_url : null,
+        created_at: txCreatedAt ? txCreatedAt.toISOString() : null,
+        expired_at: txExpiredAt ? txExpiredAt.toISOString() : null,
+        remaining_seconds: remainingSeconds,
+        message: isExpired
+          ? 'Batas waktu pembayaran (30 menit) telah kedaluwarsa.'
+          : (isPaid ? 'Pembayaran berhasil dikonfirmasi.' : 'Menunggu pembayaran.'),
       },
       data: {
         order_id: orderId,
-        transaction_status: isPaid ? 'settlement' : txStatus,
+        transaction_status: txStatus,
         is_paid: isPaid,
+        is_expired: isExpired,
+        expired_at: txExpiredAt ? txExpiredAt.toISOString() : null,
+        remaining_seconds: remainingSeconds,
         transaction: tx,
         midtrans_response: statusResponse,
       },
@@ -622,6 +809,7 @@ export const checkStatus = async (req: Request, res: Response) => {
       status: {
         transaction_status: 'pending',
         is_paid: false,
+        is_expired: false,
       },
     });
   }
@@ -630,7 +818,7 @@ export const checkStatus = async (req: Request, res: Response) => {
 /**
  * POST /api/payment/notification
  * Webhook callback dari Midtrans untuk memperbarui status pesanan menjadi 'paid' secara otomatis saat transaksi sukses.
- * Sekaligus menambah booked_count event sesuai quantity tiket yang dibeli.
+ * Sekaligus menambah booked_count event sesuai quantity tiket yang dibeli, dan membatalkan pesanan jika kedaluwarsa.
  */
 export const handleNotification = async (req: Request, res: Response) => {
   try {
@@ -669,6 +857,34 @@ export const handleNotification = async (req: Request, res: Response) => {
     if (orderId) {
       await updateTransactionStatus(orderStatus, txStatus, statusResponse, orderId);
 
+      // Sinkronkan status pesanan kedai
+      if (orderStatus === 'paid') {
+        try {
+          await pool.execute(
+            `UPDATE orders
+             SET payment_status = 'PAID',
+                 order_status = 'Disiapkan',
+                 status = 'disiapkan',
+                 updated_at = NOW()
+             WHERE (id = ? OR order_code = ?) AND payment_status != 'PAID'`,
+            [orderId, orderId]
+          );
+        } catch (_) {}
+      } else if (transactionStatus === 'expire' || ['cancel', 'deny'].includes(transactionStatus)) {
+        try {
+          await pool.execute(
+            `UPDATE orders
+             SET payment_status = 'EXPIRED',
+                 order_status = 'Batal (Kedaluwarsa)',
+                 status = 'batal',
+                 updated_at = NOW()
+             WHERE (id = ? OR order_code = ?) AND payment_status = 'UNPAID'`,
+            [orderId, orderId]
+          );
+        } catch (_) {}
+      }
+
+      // Sinkronkan status tiket jika merupakan transaksi tiket
       const ticketStatus =
         orderStatus === 'paid' ? 'Lunas' :
         orderStatus === 'failed' ? 'Gagal' : 'Menunggu Pembayaran';
@@ -682,7 +898,6 @@ export const handleNotification = async (req: Request, res: Response) => {
             const eventId = ttRows[0].event_id;
             const qty = Math.max(1, Number(ttRows[0].quantity) || 1);
 
-            // Gunakan transaksi DB untuk atomic update + auto Tiket Penuh
             const conn = await pool.getConnection();
             try {
               await conn.beginTransaction();

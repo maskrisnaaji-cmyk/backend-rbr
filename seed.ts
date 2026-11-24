@@ -4,40 +4,26 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 async function seed() {
-  // Koneksi tanpa memilih database dulu agar bisa CREATE DATABASE jika belum ada
+  const dbHost = process.env.DB_HOST || 'localhost';
+  const dbPort = Number(process.env.DB_PORT) || 3306;
+  const dbUser = process.env.DB_USER || 'root';
+  const dbPassword = process.env.DB_PASSWORD || '';
+  const dbName = process.env.DB_NAME || 'rumah_budaya_ratna';
+
+  console.log(`🔌 Terhubung ke MySQL untuk seeding akun (${dbHost}:${dbPort})...`);
+
+  // 1. Hubungkan langsung ke database target
   const connection = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
+    host: dbHost,
+    port: dbPort,
+    user: dbUser,
+    password: dbPassword,
+    database: dbName,
   });
 
-  console.log('🔌 Terhubung ke MySQL...');
+  console.log(`✅ Terhubung ke database '${dbName}'.`);
 
-  // 1. Buat database jika belum ada (DDL → query(), bukan execute())
-  await connection.query(
-    `CREATE DATABASE IF NOT EXISTS \`${process.env.DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-  );
-  console.log(`✅ Database '${process.env.DB_NAME}' siap.`);
-
-  // 2. Gunakan database (DDL → query())
-  await connection.query(`USE \`${process.env.DB_NAME}\``);
-
-  // 3. Buat tabel users (DDL → query())
-  await connection.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id          INT AUTO_INCREMENT PRIMARY KEY,
-      name        VARCHAR(100)  NOT NULL,
-      email       VARCHAR(100)  NOT NULL UNIQUE,
-      phone       VARCHAR(20)   NULL,
-      password    VARCHAR(255)  NOT NULL,
-      role        ENUM('admin', 'user') NOT NULL DEFAULT 'user',
-      security_pin VARCHAR(50)  DEFAULT 'RBR2026',
-      createdAt   TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `);
-  console.log('✅ Tabel users siap.');
-
-  // 4. Seed akun dummy
+  // 2. Akun bawaan (Admin & User Pengujian)
   const accounts = [
     { name: 'Admin RBR', email: 'admin@rbr.com', password: 'rumahbudayamalang', role: 'admin' },
     { name: 'User RBR',  email: 'user@rbr.com',  password: 'user123',           role: 'user'  },
@@ -46,34 +32,38 @@ async function seed() {
   for (const account of accounts) {
     const hashedPassword = await bcrypt.hash(account.password, 10);
 
-    // Cek apakah email sudah ada
+    // Cek apakah akun sudah ada di database
     const [rows]: any = await connection.query(
-      'SELECT id FROM users WHERE email = ?',
+      'SELECT id, role FROM users WHERE email = ?',
       [account.email]
     );
 
-    if (rows.length > 0) {
-      // Update password dan data terbaru jika akun sudah ada
-      await connection.query(
-        'UPDATE users SET name = ?, password = ?, role = ? WHERE email = ?',
-        [account.name, hashedPassword, account.role, account.email]
-      );
-      console.log(`🔄 Akun '${account.email}' (${account.role}) berhasil diperbarui dengan password baru.`);
+    if (rows && rows.length > 0) {
+      // Pada mode production, jangan timpa password yang mungkin sudah diubah oleh admin
+      if (process.env.NODE_ENV === 'production') {
+        console.log(`ℹ️ [Production] Akun '${account.email}' sudah terdaftar, melewati pembaruan password.`);
+      } else {
+        await connection.query(
+          'UPDATE users SET name = ?, password = ?, role = ? WHERE email = ?',
+          [account.name, hashedPassword, account.role, account.email]
+        );
+        console.log(`🔄 Akun '${account.email}' (${account.role}) berhasil diperbarui.`);
+      }
     } else {
       await connection.query(
         'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
         [account.name, account.email, hashedPassword, account.role]
       );
-      console.log(`✅ Akun '${account.email}' (${account.role}) berhasil ditambahkan.`);
+      console.log(`✅ Akun '${account.email}' (${account.role}) berhasil dibuat.`);
     }
   }
 
   await connection.end();
-  console.log('\n🎉 Seeder selesai! Database siap digunakan.');
+  console.log('🎉 Seeding selesai dengan aman!');
   process.exit(0);
 }
 
 seed().catch((err) => {
-  console.error('❌ Seeder gagal:', err.message);
+  console.error('❌ Seeding gagal:', err.message);
   process.exit(1);
 });

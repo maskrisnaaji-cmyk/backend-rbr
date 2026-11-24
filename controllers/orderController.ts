@@ -11,20 +11,7 @@ import {
 import { createNotification } from '../models/notificationModel';
 
 // ─── Helper: Auto-expire order kedai yang sudah melewati 30 menit ─────────────
-let isColumnsChecked = false;
-async function ensureOrderColumns() {
-  if (isColumnsChecked) return;
-  try {
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS expired_at TIMESTAMP NULL");
-    isColumnsChecked = true;
-  } catch (_) {
-    isColumnsChecked = true;
-  }
-}
-
 export async function autoExpireKedaiOrders() {
-  await ensureOrderColumns();
   try {
     await pool.query(`
       UPDATE orders
@@ -281,7 +268,6 @@ export const createOrder = async (req: Request, res: Response) => {
     const orderTime = time || 'Baru saja';
 
     // ── Simpan waktu dibuat (created_at) & batas waktu 30 menit (expired_at) konsisten dari server
-    await ensureOrderColumns();
     const serverCreatedAt = new Date();
     const serverExpiredAt = new Date(serverCreatedAt.getTime() + 30 * 60 * 1000);
     const paymentMethod = req.body.payment_method || (req.body.payment_type === 'qris' ? 'qris' : 'kasir');

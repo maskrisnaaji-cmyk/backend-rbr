@@ -110,27 +110,14 @@ export const createMenu = async (req: Request, res: Response) => {
       );
     } catch (dbErr: any) {
       if (dbErr.code === 'ER_BAD_FIELD_ERROR') {
-        try {
-          await pool.query('ALTER TABLE menus ADD COLUMN is_available BOOLEAN NOT NULL DEFAULT TRUE');
-          result = await insertMenuWithAvailability(
-            name,
-            category || 'Kopi Nusantara',
-            Number(price) || 0,
-            description || '',
-            image || '',
-            finalStatus,
-            availableBool ? 1 : 0
-          );
-        } catch (_) {
-          result = await insertMenuWithoutAvailability(
-            name,
-            category || 'Kopi Nusantara',
-            Number(price) || 0,
-            description || '',
-            image || '',
-            finalStatus
-          );
-        }
+        result = await insertMenuWithoutAvailability(
+          name,
+          category || 'Kopi Nusantara',
+          Number(price) || 0,
+          description || '',
+          image || '',
+          finalStatus
+        );
       } else {
         throw dbErr;
       }
@@ -192,29 +179,15 @@ export const updateMenu = async (req: Request, res: Response) => {
       );
     } catch (dbErr: any) {
       if (dbErr.code === 'ER_BAD_FIELD_ERROR') {
-        try {
-          await pool.query('ALTER TABLE menus ADD COLUMN is_available BOOLEAN NOT NULL DEFAULT TRUE');
-          await updateMenuWithAvailability(
-            name !== undefined ? name : current.name,
-            category !== undefined ? category : current.category,
-            price !== undefined ? Number(price) : current.price,
-            description !== undefined ? description : current.description,
-            image !== undefined ? image : current.image,
-            nextStatus,
-            nextAvailable ? 1 : 0,
-            id
-          );
-        } catch (_) {
-          await updateMenuWithoutAvailability(
-            name !== undefined ? name : current.name,
-            category !== undefined ? category : current.category,
-            price !== undefined ? Number(price) : current.price,
-            description !== undefined ? description : current.description,
-            image !== undefined ? image : current.image,
-            nextStatus,
-            id
-          );
-        }
+        await updateMenuWithoutAvailability(
+          name !== undefined ? name : current.name,
+          category !== undefined ? category : current.category,
+          price !== undefined ? Number(price) : current.price,
+          description !== undefined ? description : current.description,
+          image !== undefined ? image : current.image,
+          nextStatus,
+          id
+        );
       } else {
         throw dbErr;
       }
@@ -268,12 +241,7 @@ export const patchMenuStatus = async (req: Request, res: Response) => {
       await patchMenuStatusWithAvailability(nextAvailable ? 1 : 0, nextStatus, id);
     } catch (dbErr: any) {
       if (dbErr.code === 'ER_BAD_FIELD_ERROR') {
-        try {
-          await pool.query('ALTER TABLE menus ADD COLUMN is_available BOOLEAN NOT NULL DEFAULT TRUE');
-          await patchMenuStatusWithAvailability(nextAvailable ? 1 : 0, nextStatus, id);
-        } catch (_) {
-          await patchMenuStatusWithoutAvailability(nextStatus, id);
-        }
+        await patchMenuStatusWithoutAvailability(nextStatus, id);
       } else {
         throw dbErr;
       }

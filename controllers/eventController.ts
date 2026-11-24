@@ -11,19 +11,10 @@ import {
   deleteEvent as deleteEventModel,
 } from '../models/eventModel';
 
-// ─── Helper: pastikan kolom booked_count selalu tersedia di tabel events ──────
-let isBookedCountEnsured = false;
+// ─── Helper: pastikan inisialisasi tabel ditangani di init_db.ts ───────────────
 async function ensureBookedCountColumn() {
-  if (isBookedCountEnsured) return;
-  try {
-    await pool.query('ALTER TABLE events ADD COLUMN booked_count INT DEFAULT 0 AFTER sold');
-    await pool.query('UPDATE events SET booked_count = COALESCE(sold, 0) WHERE booked_count = 0 OR booked_count IS NULL');
-    isBookedCountEnsured = true;
-  } catch (err: any) {
-    if (err.code === 'ER_DUP_FIELDNAME' || err.message?.includes('Duplicate column')) {
-      isBookedCountEnsured = true;
-    }
-  }
+  // Inisialisasi kolom tabel events sudah ditangani di init_db.ts
+  return;
 }
 
 // ─── Helper: format satu row event menjadi response standar ──────────────────
@@ -120,17 +111,10 @@ export const getAllEvents = async (req: Request, res: Response) => {
       const [r] = await pool.query(query, params);
       rows = r as any[];
     } catch (queryErr: any) {
-      if (queryErr.code === 'ER_BAD_FIELD_ERROR' || queryErr.message?.includes('booked_count')) {
-        await pool.query('ALTER TABLE events ADD COLUMN booked_count INT DEFAULT 0 AFTER sold');
-        await pool.query('UPDATE events SET booked_count = COALESCE(sold, 0) WHERE booked_count = 0 OR booked_count IS NULL');
-        const [r] = await pool.query(query, params);
-        rows = r as any[];
-      } else {
-        // Fallback jika kolom baru belum ada di DB
-        const fallbackQuery = 'SELECT * FROM events ORDER BY date ASC, id ASC';
-        const [r] = await pool.query(fallbackQuery);
-        rows = r as any[];
-      }
+      // Fallback query aman jika kolom opsional/filter terkendala
+      const fallbackQuery = 'SELECT * FROM events ORDER BY date ASC, id ASC';
+      const [r] = await pool.query(fallbackQuery);
+      rows = r as any[];
     }
 
     const formattedRows = rows.map(formatEventRow);
@@ -156,14 +140,8 @@ export const getEventById = async (req: Request, res: Response) => {
       const [r] = await pool.execute(selectQuery, [id]);
       rows = r as any[];
     } catch (queryErr: any) {
-      if (queryErr.code === 'ER_BAD_FIELD_ERROR' || queryErr.message?.includes('booked_count')) {
-        await pool.query('ALTER TABLE events ADD COLUMN booked_count INT DEFAULT 0 AFTER sold');
-        await pool.query('UPDATE events SET booked_count = COALESCE(sold, 0) WHERE booked_count = 0 OR booked_count IS NULL');
-        const [r] = await pool.execute(selectQuery, [id]);
-        rows = r as any[];
-      } else {
-        throw queryErr;
-      }
+      const [r] = await pool.execute('SELECT * FROM events WHERE id = ?', [id]);
+      rows = r as any[];
     }
 
     if (rows.length === 0) {
@@ -511,15 +489,6 @@ export const createWorkshopProposal = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Judul lokakarya wajib diisi.' });
     }
 
-    // Pastikan kolom organizer ada di tabel events
-    try {
-      await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name VARCHAR(150) NULL");
-      await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_contact VARCHAR(100) NULL");
-      await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_email VARCHAR(150) NULL");
-      await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS description TEXT NULL");
-      await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS status_approval VARCHAR(50) NOT NULL DEFAULT 'approved'");
-    } catch { /* kolom sudah ada */ }
-
     const [result]: any = await pool.query(
       `INSERT INTO events
          (title, date, time, location, price, quota, sold, booked_count,
@@ -569,10 +538,6 @@ export const approveEvent = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Event tidak ditemukan.' });
     }
 
-    try {
-      await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS status_approval VARCHAR(50) NOT NULL DEFAULT 'approved'");
-    } catch { /* sudah ada */ }
-
     await pool.execute(
       "UPDATE events SET status_approval = 'approved' WHERE id = ?",
       [id]
@@ -608,11 +573,6 @@ export const rejectEvent = async (req: Request, res: Response) => {
     if (!existing || existing.length === 0) {
       return res.status(404).json({ message: 'Event tidak ditemukan.' });
     }
-
-    try {
-      await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS status_approval VARCHAR(50) NOT NULL DEFAULT 'approved'");
-      await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS rejection_reason TEXT NULL");
-    } catch { /* sudah ada */ }
 
     await pool.execute(
       "UPDATE events SET status_approval = 'rejected', rejection_reason = ? WHERE id = ?",

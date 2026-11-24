@@ -109,7 +109,13 @@ async function initDb() {
     await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS image VARCHAR(255) NULL");
     await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS banner_image VARCHAR(255) NULL");
     await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS category VARCHAR(50) NULL DEFAULT 'Budaya'");
-  } catch (err) {
+    await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name VARCHAR(150) NULL");
+    await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_contact VARCHAR(100) NULL");
+    await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_email VARCHAR(150) NULL");
+    await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS description TEXT NULL");
+    await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS status_approval VARCHAR(50) NOT NULL DEFAULT 'approved'");
+    await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS rejection_reason TEXT NULL");
+  } catch (err: any) {
     console.log('Kolom events sudah ada atau tidak perlu diubah:', err.message);
   }
 

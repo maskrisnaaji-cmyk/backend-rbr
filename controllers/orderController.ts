@@ -284,7 +284,8 @@ export const createOrder = async (req: Request, res: Response) => {
     await ensureOrderColumns();
     const serverCreatedAt = new Date();
     const serverExpiredAt = new Date(serverCreatedAt.getTime() + 30 * 60 * 1000);
-    const paymentMethod = req.body.payment_method || (req.body.payment_type === 'qris' ? 'qris' : 'kasir');
+    const rawPt = (req.body.payment_type || '').toLowerCase();
+    const paymentMethod = req.body.payment_method || (rawPt === 'qris' ? 'qris' : (['bank_transfer', 'va', 'echannel', 'permata'].includes(rawPt) ? 'va' : 'kasir'));
 
     await insertOrUpdateOrder(
       rowId,

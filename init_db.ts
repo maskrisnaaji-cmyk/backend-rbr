@@ -465,6 +465,31 @@ async function initDb() {
     `);
   }
 
+  // 8. Pastikan status_approval di events dan tabel event_presale_tiers
+  try {
+    await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS status_approval VARCHAR(50) DEFAULT 'approved'");
+    await pool.query("UPDATE events SET status_approval = 'approved' WHERE status_approval IS NULL");
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS event_presale_tiers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        event_id INT NOT NULL,
+        tier_name VARCHAR(100) NOT NULL,
+        tier_order INT NOT NULL DEFAULT 1,
+        price INT NOT NULL DEFAULT 0,
+        quota INT NOT NULL DEFAULT 50,
+        sold INT NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+        INDEX idx_event_id (event_id),
+        INDEX idx_tier_order (event_id, tier_order)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+  } catch (err: any) {
+    console.log('Tabel presale tiers / kolom status_approval:', err.message);
+  }
+
   console.log('✅ Inisialisasi DB selesai!');
   process.exit(0);
 }

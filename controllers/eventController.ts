@@ -18,6 +18,7 @@ async function ensureBookedCountColumn() {
   try {
     await pool.query('ALTER TABLE events ADD COLUMN booked_count INT DEFAULT 0 AFTER sold');
     await pool.query('UPDATE events SET booked_count = COALESCE(sold, 0) WHERE booked_count = 0 OR booked_count IS NULL');
+    await pool.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS status_approval VARCHAR(50) DEFAULT 'approved'");
     isBookedCountEnsured = true;
   } catch (err: any) {
     if (err.code === 'ER_DUP_FIELDNAME' || err.message?.includes('Duplicate column')) {

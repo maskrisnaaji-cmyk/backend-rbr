@@ -215,13 +215,14 @@ export const createCharge = async (req: Request, res: Response) => {
     const pt = (payment_type || '').toLowerCase().trim();
     const isQris = pt === 'qris' || pt.includes('qris');
     const isCash = ['cash', 'kasir', 'tunai', 'bayar_di_kasir', 'bayar_kasir'].includes(pt);
+    const isVa = ['bank_transfer', 'va', 'virtual_account', 'echannel', 'permata'].includes(pt);
     const bankName = (bank || 'bca').toLowerCase();
 
-    // ── ATURAN 1: Untuk transaksi Kedai, HANYA QRIS dan Bayar di Kasir yang didukung ──
-    if (isKedai && !isQris && !isCash) {
+    // ── Validasi Metode Pembayaran Kedai: mendukung QRIS, Virtual Account (VA), dan Bayar di Kasir ──
+    if (isKedai && !isQris && !isCash && !isVa) {
       return res.status(400).json({
         success: false,
-        message: "Metode pembayaran tidak valid untuk pesanan Kedai. Hanya metode 'QRIS' dan 'Bayar di Kasir' yang didukung.",
+        message: "Metode pembayaran tidak valid untuk pesanan Kedai. Mendukung 'QRIS', 'Virtual Account', dan 'Bayar di Kasir'.",
       });
     }
 
@@ -396,13 +397,14 @@ export const createCharge = async (req: Request, res: Response) => {
     // Jika pesanan kedai, sinkronkan payment_method dan expired_at ke tabel orders
     if (isKedai) {
       try {
+        const orderPaymentMethod = isQris ? 'qris' : (isCash ? 'kasir' : `va_${bankName}`);
         await pool.query(
           `UPDATE orders
-           SET payment_method = 'qris',
+           SET payment_method = ?,
                expired_at = COALESCE(expired_at, ?),
                updated_at = NOW()
            WHERE id = ? OR order_code = ?`,
-          [expiredAt, cleanOrderId, cleanOrderId]
+          [orderPaymentMethod, expiredAt, cleanOrderId, cleanOrderId]
         );
       } catch (_) {}
     }

@@ -21,15 +21,8 @@ export interface User {
  * which is not supported consistently by all MySQL-compatible servers.
  */
 const ensureVerificationColumn = async () => {
-  try {
-    await pool.query(
-      "ALTER TABLE users ADD COLUMN is_verified TINYINT(1) NOT NULL DEFAULT 0"
-    );
-  } catch (err: any) {
-    if (err.code !== 'ER_DUP_FIELDNAME' && !String(err.message || '').toLowerCase().includes('duplicate column')) {
-      throw err;
-    }
-  }
+  // Inisialisasi kolom tabel users ditangani di init_db.ts
+  return;
 };
 
 export const findUserEmailOnly = async (email: string) => {

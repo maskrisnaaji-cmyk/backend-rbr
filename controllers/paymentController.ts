@@ -28,20 +28,6 @@ const snap = new midtransClient.Snap({
   clientKey: process.env.MIDTRANS_CLIENT_KEY || 'SB-Mid-server-cNRPfg50s3Xc.ZQuesNEDHdv',
 });
 
-// ─── Helper: pastikan kolom expired_at & payment_method tersedia di tabel ───────
-let isTxColumnsChecked = false;
-async function ensureTransactionColumns() {
-  if (isTxColumnsChecked) return;
-  try {
-    await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS expired_at TIMESTAMP NULL");
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS expired_at TIMESTAMP NULL");
-    await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) NULL");
-    isTxColumnsChecked = true;
-  } catch (_) {
-    isTxColumnsChecked = true;
-  }
-}
-
 /**
  * Helper untuk memvalidasi kupon promo dan menghitung nilai diskon:
  * - Memeriksa keberadaan kode kupon (case-insensitive)
@@ -227,7 +213,6 @@ export const createCharge = async (req: Request, res: Response) => {
     }
 
     // ── ATURAN 2: Simpan waktu server konsisten & batas waktu pembayaran 30 menit ──────
-    await ensureTransactionColumns();
     const createdAt = new Date();
     const expiredAt = new Date(createdAt.getTime() + 30 * 60 * 1000);
 
@@ -672,8 +657,6 @@ export const checkStatus = async (req: Request, res: Response) => {
         message: 'Order ID wajib diisi.',
       });
     }
-
-    await ensureTransactionColumns();
 
     // 1. Periksa status lokal di database MySQL terlebih dahulu
     const rows = await getTransactionByOrderId(orderId);

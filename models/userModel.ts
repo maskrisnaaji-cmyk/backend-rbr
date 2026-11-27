@@ -92,6 +92,14 @@ export const findUserByIdentifierForReset = async (trimmedIdentifier: string) =>
   return rows as User[];
 };
 
+export const findUserByEmailAndPhone = async (email: string, phone: string) => {
+  const [rows] = await pool.execute(
+    'SELECT id, name, email, phone, role FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?)) AND TRIM(phone) = TRIM(?) LIMIT 1',
+    [email, phone]
+  );
+  return rows as User[];
+};
+
 export const updateUserPassword = async (hashedPassword: string, targetUserId: number | string) => {
   const [result] = await pool.execute(
     'UPDATE users SET password = ? WHERE id = ?',

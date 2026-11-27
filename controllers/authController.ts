@@ -10,6 +10,7 @@ import {
   createGoogleUser,
   findUserByIdentifier,
   findUserByIdentifierForReset,
+  findUserByEmailAndPhone,
   updateUserPassword,
   findUserByEmailOrPhone,
   updateUserName,
@@ -184,30 +185,95 @@ export const verifyResetIdentity = async (req: Request, res: Response) => {
 };
 
 /**
- * POST /api/auth/reset-password
- * Memperbarui kata sandi langsung di database setelah verifikasi
+ * POST /api/auth/verify-reset-account
+ * Menerima { email, phone }. Cek apakah ada user dengan kombinasi email DAN nomor HP tersebut.
+ * Jika cocok: kembalikan 200 OK { success: true, message: "Akun terverifikasi" }
+ * Jika tidak cocok: kembalikan 404 / 400 dengan pesan jelas.
+ */
+export const verifyResetAccount = async (req: Request, res: Response) => {
+  try {
+    const { email, phone } = req.body;
+
+    if (!email || !phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email dan nomor handphone wajib diisi.',
+      });
+    }
+
+    const trimmedEmail = String(email).trim();
+    const trimmedPhone = String(phone).trim();
+
+    if (!trimmedEmail || !trimmedPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email dan nomor handphone tidak boleh kosong.',
+      });
+    }
+
+    const rows = await findUserByEmailAndPhone(trimmedEmail, trimmedPhone);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Akun dengan kombinasi email dan nomor handphone tersebut tidak ditemukan.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Akun terverifikasi',
+    });
+  } catch (err) {
+    console.error('[verifyResetAccount]', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan pada server saat verifikasi akun.',
+    });
+  }
+};
+
+/**
+ * POST /api/auth/reset-password-direct
+ * Menerima { email, phone, newPassword }. Validasi ulang kecocokan email + phone di database,
+ * hash newPassword menggunakan bcrypt, simpan ke database, lalu kembalikan 200 OK.
+ * Juga mendukung backward compatibility untuk skenario reset internal/token jika disediakan.
  */
 export const resetPasswordDirect = async (req: Request, res: Response) => {
   try {
-    const { userId, resetToken, newPassword, identifier, securityPin } = req.body;
+    const { email, phone, newPassword, userId, resetToken, identifier, securityPin } = req.body;
 
-    if (!newPassword || newPassword.length < 6) {
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
       return res.status(400).json({ 
+        success: false,
         message: 'Kata sandi baru wajib diisi minimal 6 karakter.' 
       });
     }
 
     let targetUserId = userId;
 
-    if (resetToken) {
+    // Alur 2 Tahap: Verifikasi kecocokan Email + No. Handphone
+    if (email && phone) {
+      const trimmedEmail = String(email).trim();
+      const trimmedPhone = String(phone).trim();
+
+      const rows = await findUserByEmailAndPhone(trimmedEmail, trimmedPhone);
+      if (rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Kombinasi email dan nomor handphone tidak cocok atau tidak terdaftar.',
+        });
+      }
+      targetUserId = rows[0].id;
+    } else if (resetToken) {
       try {
         const decoded = jwt.verify(resetToken, process.env.JWT_SECRET as string) as any;
         if (decoded.purpose !== 'reset-password') {
-          return res.status(401).json({ message: 'Token reset tidak valid.' });
+          return res.status(401).json({ success: false, message: 'Token reset tidak valid.' });
         }
         targetUserId = decoded.id;
       } catch (tokenErr) {
-        return res.status(401).json({ message: 'Sesi verifikasi kadaluarsa. Silakan verifikasi ulang.' });
+        return res.status(401).json({ success: false, message: 'Sesi verifikasi kadaluarsa. Silakan verifikasi ulang.' });
       }
     } else if (identifier && securityPin) {
       // Verifikasi langsung tanpa token jika disediakan identifier + securityPin
@@ -217,7 +283,7 @@ export const resetPasswordDirect = async (req: Request, res: Response) => {
       const rows = await findUserByIdentifierForReset(trimmedIdentifier);
 
       if (rows.length === 0) {
-        return res.status(404).json({ message: 'Akun staf/admin tidak ditemukan.' });
+        return res.status(404).json({ success: false, message: 'Akun staf/admin tidak ditemukan.' });
       }
 
       const user: any = rows[0];
@@ -231,11 +297,14 @@ export const resetPasswordDirect = async (req: Request, res: Response) => {
       ].filter(Boolean);
 
       if (!allowedPins.includes(trimmedPin)) {
-        return res.status(401).json({ message: 'Kode PIN Keamanan internal salah.' });
+        return res.status(401).json({ success: false, message: 'Kode PIN Keamanan internal salah.' });
       }
       targetUserId = user.id;
     } else if (!targetUserId) {
-      return res.status(400).json({ message: 'Data otentikasi reset tidak lengkap.' });
+      return res.status(400).json({ 
+        success: false,
+        message: 'Email dan nomor handphone wajib disertakan untuk mereset kata sandi.' 
+      });
     }
 
     // Hash password baru dengan bcrypt
@@ -245,16 +314,22 @@ export const resetPasswordDirect = async (req: Request, res: Response) => {
     const result = await updateUserPassword(hashedPassword, targetUserId);
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Pengguna tidak ditemukan untuk memperbarui kata sandi.' });
+      return res.status(404).json({ 
+        success: false,
+        message: 'Pengguna tidak ditemukan untuk memperbarui kata sandi.' 
+      });
     }
 
     return res.status(200).json({
-      message: 'Kata sandi berhasil diperbarui langsung di database.',
       success: true,
+      message: 'Kata sandi berhasil diperbarui langsung di database.',
     });
   } catch (err) {
     console.error('[resetPasswordDirect]', err);
-    return res.status(500).json({ message: 'Terjadi kesalahan server saat memperbarui kata sandi.' });
+    return res.status(500).json({ 
+      success: false,
+      message: 'Terjadi kesalahan server saat memperbarui kata sandi.' 
+    });
   }
 };
 
@@ -418,6 +493,7 @@ module.exports = {
   login,
   logout,
   verifyResetIdentity,
+  verifyResetAccount,
   resetPasswordDirect,
   forgotPassword,
   googleLogin,

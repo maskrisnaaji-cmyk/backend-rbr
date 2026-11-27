@@ -4,6 +4,7 @@ import {
   login, 
   logout, 
   verifyResetIdentity, 
+  verifyResetAccount,
   resetPasswordDirect,
   forgotPassword,
   googleLogin,
@@ -30,7 +31,13 @@ router.post('/forgot-password', forgotPassword);
 // POST /api/auth/verify-reset-identity — Verifikasi data internal staf (Username/ID & PIN)
 router.post('/verify-reset-identity', verifyResetIdentity);
 
-// POST /api/auth/reset-password — Input kata sandi baru & update langsung di DB
+// POST /api/auth/verify-reset-account — Verifikasi kecocokan Email + No. HP
+router.post('/verify-reset-account', verifyResetAccount);
+
+// POST /api/auth/reset-password-direct — Reset password langsung dengan verifikasi email + no. HP
+router.post('/reset-password-direct', resetPasswordDirect);
+
+// POST /api/auth/reset-password — Input kata sandi baru & update langsung di DB (backward compatibility)
 router.post('/reset-password', resetPasswordDirect);
 
 export default router;

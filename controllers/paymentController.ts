@@ -12,6 +12,7 @@ import {
 } from '../models/transactionModel';
 import { getCouponByCode } from '../models/couponModel';
 import { getUserById, getUserByEmail } from '../models/userModel';
+import { createUserNotification } from '../models/notificationModel';
 
 const midtransClient = require('midtrans-client');
 
@@ -739,7 +740,7 @@ export const checkStatus = async (req: Request, res: Response) => {
         await updateTicketTransactionPaid(orderId);
 
         // Sinkronkan ke pesanan kedai agar langsung masuk antrean 'Disiapkan'
-        await pool.execute(
+        const [updateOrderRes]: any = await pool.execute(
           `UPDATE orders
            SET payment_status = 'PAID',
                order_status = 'Disiapkan',
@@ -748,6 +749,30 @@ export const checkStatus = async (req: Request, res: Response) => {
            WHERE (id = ? OR order_code = ?) AND payment_status != 'PAID'`,
           [orderId, orderId]
         );
+
+        // Kirim notifikasi ke user pemesan jika baru berubah menjadi PAID
+        if (updateOrderRes?.affectedRows > 0) {
+          try {
+            const [orderRows]: any = await pool.execute(
+              'SELECT user_id, order_code, total_amount, total_price FROM orders WHERE id = ? OR order_code = ? LIMIT 1',
+              [orderId, orderId]
+            );
+            if (orderRows && orderRows.length > 0) {
+              const orderUserId = orderRows[0].user_id || null;
+              const orderCode = orderRows[0].order_code || orderId;
+              await createUserNotification({
+                userId: orderUserId,
+                orderId: String(orderCode),
+                title: 'Pesanan Disiapkan',
+                message: `Pembayaran pesanan ${orderCode} berhasil. Pesanan Anda sedang disiapkan.`,
+                type: 'order',
+                orderStatus: 'Sedang Diproses',
+                email: orderRows[0].customer_email || null,
+                phone: orderRows[0].customer_phone || null,
+              });
+            }
+          } catch (_) {}
+        }
       } catch (paidSyncErr: any) {
         console.warn('[paymentController] Gagal sinkron status paid:', paidSyncErr.message);
       }
@@ -845,7 +870,7 @@ export const handleNotification = async (req: Request, res: Response) => {
       // Sinkronkan status pesanan kedai
       if (orderStatus === 'paid') {
         try {
-          await pool.execute(
+          const [updateOrderRes]: any = await pool.execute(
             `UPDATE orders
              SET payment_status = 'PAID',
                  order_status = 'Disiapkan',
@@ -854,6 +879,30 @@ export const handleNotification = async (req: Request, res: Response) => {
              WHERE (id = ? OR order_code = ?) AND payment_status != 'PAID'`,
             [orderId, orderId]
           );
+
+          // Kirim notifikasi ke user pemesan jika baru berubah menjadi PAID
+          if (updateOrderRes?.affectedRows > 0) {
+            try {
+              const [orderRows]: any = await pool.execute(
+                'SELECT user_id, order_code, total_amount, total_price FROM orders WHERE id = ? OR order_code = ? LIMIT 1',
+                [orderId, orderId]
+              );
+              if (orderRows && orderRows.length > 0) {
+                const orderUserId = orderRows[0].user_id || null;
+                const orderCode = orderRows[0].order_code || orderId;
+                await createUserNotification({
+                  userId: orderUserId,
+                  orderId: String(orderCode),
+                  title: 'Pesanan Disiapkan',
+                  message: `Pembayaran pesanan ${orderCode} berhasil. Pesanan Anda sedang disiapkan.`,
+                  type: 'order',
+                  orderStatus: 'Sedang Diproses',
+                  email: orderRows[0].customer_email || null,
+                  phone: orderRows[0].customer_phone || null,
+                });
+              }
+            } catch (_) {}
+          }
         } catch (_) {}
       } else if (transactionStatus === 'expire' || ['cancel', 'deny'].includes(transactionStatus)) {
         try {
@@ -882,6 +931,25 @@ export const handleNotification = async (req: Request, res: Response) => {
           if (ttRows.length > 0 && ttRows[0].event_id) {
             const eventId = ttRows[0].event_id;
             const qty = Math.max(1, Number(ttRows[0].quantity) || 1);
+
+            // Kirim notifikasi pembayaran tiket agenda berhasil
+            try {
+              const [evInfoRows]: any = await pool.execute(
+                'SELECT title FROM events WHERE id = ? LIMIT 1',
+                [eventId]
+              );
+              const eventTitle = evInfoRows?.[0]?.title || 'Agenda';
+              const ticketUserId = (ttRows[0] as any).user_id || null;
+              await createUserNotification({
+                userId: ticketUserId,
+                orderId: String(orderId),
+                title: 'Tiket Agenda Berhasil Dibayar',
+                message: `Pembayaran tiket ${eventTitle} telah lunas.`,
+                type: 'ticket',
+                orderStatus: 'Lunas',
+                email: (ttRows[0] as any).customer_email || null,
+              });
+            } catch (_) {}
 
             const conn = await pool.getConnection();
             try {

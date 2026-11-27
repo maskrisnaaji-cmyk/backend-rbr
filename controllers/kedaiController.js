@@ -27,6 +27,21 @@ const mapOrder = (row) => ({
   payment_status: row.payment_status || 'UNPAID',
 });
 
+/**
+ * Helper: simpan notifikasi ke DB (tidak fatal jika gagal)
+ */
+const saveNotification = async (userId, orderId, title, message, orderStatus) => {
+  try {
+    await pool.execute(
+      `INSERT INTO notifications (user_id, order_id, title, message, type, order_status, is_read)
+       VALUES (?, ?, ?, ?, 'order', ?, 0)`,
+      [userId || null, orderId, title, message, orderStatus]
+    );
+  } catch (err) {
+    console.warn('[kedai:saveNotification] warning:', err.message);
+  }
+};
+
 /** GET /api/kedai/orders */
 const getOrders = async (_req, res) => {
   try {
@@ -41,7 +56,9 @@ const getOrders = async (_req, res) => {
 /** POST /api/kedai/orders */
 const createOrder = async (req, res) => {
   try {
-    const { order_code, table_number, items, total_price } = req.body;
+    const { order_code, table_number, items, total_price, user_id } = req.body;
+    // Ambil user_id dari JWT atau body
+    const userId = req.user?.id || user_id || null;
     const orderCode = String(order_code || `RBR-KEDAI-${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '');
     const table = String(table_number || 'Meja 01');
     const orderItems = toItems(items);
@@ -51,25 +68,24 @@ const createOrder = async (req, res) => {
     await pool.execute(
       `INSERT INTO orders
         (id, table_number, items, total, total_price, items_json, items_summary,
-         status, order_status, payment_status, time)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'menunggu', 'menunggu', 'UNPAID', 'Baru saja')
+         status, order_status, payment_status, time, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'menunggu', 'menunggu', 'UNPAID', 'Baru saja', ?)
        ON DUPLICATE KEY UPDATE
          table_number = VALUES(table_number), items = VALUES(items), total = VALUES(total),
          total_price = VALUES(total_price), items_json = VALUES(items_json),
-         items_summary = VALUES(items_summary)`,
+         items_summary = VALUES(items_summary),
+         user_id = COALESCE(user_id, VALUES(user_id))`,
       [orderCode, table, summary, `Rp ${total.toLocaleString('id-ID')}`, total,
-        JSON.stringify(orderItems), summary]
+        JSON.stringify(orderItems), summary, userId]
     );
 
-    try {
-      await pool.execute(
-        `INSERT INTO notifications (order_id, title, message, type, order_status, is_read)
-         VALUES (?, ?, ?, 'order', ?, 0)`,
-        [orderCode, 'Pesanan Kedai Baru', `Pesanan ${orderCode} (${table}) menunggu pembayaran.`, 'Menunggu Pembayaran']
-      );
-    } catch (notificationError) {
-      console.warn('[kedai:createOrder] notification warning:', notificationError.message);
-    }
+    await saveNotification(
+      userId,
+      orderCode,
+      'Pesanan Baru Dibuat',
+      `Pesanan ${orderCode} (${table}) berhasil dibuat dan menunggu pembayaran.`,
+      'Pesanan Dibuat'
+    );
 
     const [rows] = await pool.execute('SELECT * FROM orders WHERE id = ?', [orderCode]);
     res.status(201).json({ success: true, message: 'Pesanan kedai berhasil dibuat.', data: mapOrder(rows[0]) });
@@ -83,16 +99,50 @@ const createOrder = async (req, res) => {
 const updateStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const status = String(req.body.order_status || req.body.status || '').toLowerCase();
-    if (!['menunggu', 'disiapkan', 'selesai'].includes(status)) {
+    const statusInput = String(req.body.order_status || req.body.status || '').toLowerCase();
+
+    // Normalisasi status yang didukung
+    const validStatuses = ['menunggu', 'disiapkan', 'selesai', 'diantar', 'siap_diambil'];
+    if (!validStatuses.includes(statusInput)) {
       return res.status(400).json({ success: false, message: 'Status pesanan tidak valid.' });
     }
+
     const [result] = await pool.execute(
-      'UPDATE orders SET status = ?, order_status = ? WHERE id = ?', [status, status, id]
+      'UPDATE orders SET status = ?, order_status = ? WHERE id = ?', [statusInput, statusInput, id]
     );
     if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan.' });
+
+    // Ambil data order untuk mendapatkan user_id
     const [rows] = await pool.execute('SELECT * FROM orders WHERE id = ?', [id]);
-    res.json({ success: true, data: mapOrder(rows[0]) });
+    const orderRow = rows[0];
+    const userId = orderRow?.user_id || null;
+
+    // Tentukan judul & pesan notifikasi sesuai status
+    let notifTitle = 'Update Status Pesanan';
+    let notifMessage = `Pesanan ${id} diperbarui menjadi ${statusInput}.`;
+    let notifStatus = statusInput;
+
+    if (statusInput === 'disiapkan') {
+      notifTitle = 'Pesanan Sedang Disiapkan';
+      notifMessage = `Pesanan ${id} sedang diracik oleh Barista kami.`;
+      notifStatus = 'Sedang Diproses';
+    } else if (statusInput === 'diantar') {
+      notifTitle = 'Pesanan Diantar';
+      notifMessage = `Pesanan ${id} sedang diantarkan oleh staf kami.`;
+      notifStatus = 'Dalam Pengantaran';
+    } else if (statusInput === 'siap_diambil') {
+      notifTitle = 'Pesanan Siap Diambil';
+      notifMessage = `Pesanan ${id} sudah siap diambil. Silakan ke kasir.`;
+      notifStatus = 'Siap Diambil';
+    } else if (statusInput === 'selesai') {
+      notifTitle = 'Pesanan Selesai';
+      notifMessage = `Pesanan ${id} telah selesai. Terima kasih telah berkunjung ke Kedai RBR!`;
+      notifStatus = 'Selesai';
+    }
+
+    await saveNotification(userId, id, notifTitle, notifMessage, notifStatus);
+
+    res.json({ success: true, data: mapOrder(orderRow) });
   } catch (err) {
     console.error('[kedai:updateStatus]', err);
     res.status(500).json({ success: false, message: 'Gagal memperbarui status pesanan.' });
@@ -104,11 +154,23 @@ const confirmPayment = async (req, res) => {
   try {
     const { id } = req.params;
     const [result] = await pool.execute(
-      `UPDATE orders SET payment_status = 'PAID' WHERE id = ?`, [id]
+      `UPDATE orders SET payment_status = 'PAID', order_status = 'Disiapkan', status = 'disiapkan' WHERE id = ?`, [id]
     );
     if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan.' });
+
     const [rows] = await pool.execute('SELECT * FROM orders WHERE id = ?', [id]);
-    res.json({ success: true, message: 'Pembayaran pesanan dikonfirmasi.', data: mapOrder(rows[0]) });
+    const orderRow = rows[0];
+    const userId = orderRow?.user_id || null;
+
+    await saveNotification(
+      userId,
+      id,
+      'Pembayaran Berhasil — Pesanan Disiapkan',
+      `Pembayaran pesanan ${id} dikonfirmasi. Barista sedang meracik pesanan Anda.`,
+      'Sedang Diproses'
+    );
+
+    res.json({ success: true, message: 'Pembayaran pesanan dikonfirmasi.', data: mapOrder(orderRow) });
   } catch (err) {
     console.error('[kedai:confirmPayment]', err);
     res.status(500).json({ success: false, message: 'Gagal mengonfirmasi pembayaran pesanan.' });

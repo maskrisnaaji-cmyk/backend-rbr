@@ -12,6 +12,7 @@ export interface Order {
   status: 'menunggu' | 'disiapkan' | 'selesai' | 'diantar' | 'batal' | string;
   payment_method?: string | null;
   time?: string | null;
+  user_id?: number | null;
   created_at?: Date | string;
   updated_at?: Date | string;
   expired_at?: Date | string | null;
@@ -41,12 +42,13 @@ export const insertOrUpdateOrder = async (
   initialStatus: string,
   orderTime: string,
   paymentMethod: string = 'kasir',
-  expiredAt: Date | string | null = null
+  expiredAt: Date | string | null = null,
+  userId: number | null = null
 ) => {
   try {
     const [result] = await pool.execute(
-      `INSERT INTO orders (id, order_code, table_number, items, total_price, total, payment_status, order_status, status, time, payment_method, expired_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO orders (id, order_code, table_number, items, total_price, total, payment_status, order_status, status, time, payment_method, expired_at, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          table_number = VALUES(table_number),
          items = VALUES(items),
@@ -57,7 +59,8 @@ export const insertOrUpdateOrder = async (
          status = VALUES(status),
          time = VALUES(time),
          payment_method = VALUES(payment_method),
-         expired_at = VALUES(expired_at)`,
+         expired_at = VALUES(expired_at),
+         user_id = COALESCE(user_id, VALUES(user_id))`,
       [
         rowId,
         rowId,
@@ -71,11 +74,12 @@ export const insertOrUpdateOrder = async (
         orderTime,
         paymentMethod,
         expiredAt,
+        userId,
       ]
     );
     return result as any;
   } catch (err: any) {
-    // Fallback jika kolom expired_at / payment_method belum ada
+    // Fallback jika kolom user_id / expired_at / payment_method belum ada
     if (err.code === 'ER_BAD_FIELD_ERROR' || err.message?.includes('Unknown column')) {
       const [result] = await pool.execute(
         `INSERT INTO orders (id, order_code, table_number, items, total_price, total, payment_status, order_status, status, time)

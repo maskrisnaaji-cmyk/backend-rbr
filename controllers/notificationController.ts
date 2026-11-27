@@ -9,17 +9,30 @@ import {
   getLatestOrderNotification,
 } from '../models/notificationModel';
 import { updateOrderStatusByCode } from '../models/orderModel';
+import { AuthRequest } from '../middleware/authMiddleware';
 
 /**
  * GET /api/notifications
- * Mengambil daftar notifikasi terbaru beserta total unread.
+ * Mengambil daftar notifikasi milik user yang sedang login (atau semua jika admin/tanpa token),
+ * diurutkan dari yang terbaru (DESC).
  */
-export const getAllNotifications = async (req: Request, res: Response) => {
+export const getAllNotifications = async (req: AuthRequest, res: Response) => {
   try {
     const { type, unread_only } = req.query as { type?: string; unread_only?: string };
-    let query = 'SELECT * FROM notifications';
     const params: any[] = [];
     const conditions: string[] = [];
+
+    // Filter per user_id jika ada token JWT; jika tidak login kembalikan kosong
+    const userId = (req as any).user?.id || null;
+    if (!userId) {
+      return res.json({
+        success: true,
+        unreadCount: 0,
+        data: [],
+      });
+    }
+    conditions.push('user_id = ?');
+    params.push(userId);
 
     if (type) {
       conditions.push('type = ?');
@@ -30,6 +43,7 @@ export const getAllNotifications = async (req: Request, res: Response) => {
       conditions.push('is_read = 0');
     }
 
+    let query = 'SELECT * FROM notifications';
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
@@ -38,8 +52,10 @@ export const getAllNotifications = async (req: Request, res: Response) => {
 
     const rows = await getNotificationsQuery(query, params);
 
-    // Hitung total notifikasi belum dibaca
-    const unreadCount = await getUnreadNotificationsCount();
+    // Hitung total notifikasi belum dibaca (untuk user yang sama)
+    const unreadQuery = 'SELECT COUNT(*) as count FROM notifications WHERE is_read = 0 AND user_id = ?';
+    const unreadParams: any[] = [userId];
+    const unreadCount = await getUnreadNotificationsCount(unreadQuery, unreadParams);
 
     res.json({
       success: true,
@@ -69,11 +85,12 @@ export const markAsRead = async (req: Request, res: Response) => {
 
 /**
  * PUT /api/notifications/read-all
- * Menandai semua notifikasi sebagai telah dibaca.
+ * Menandai semua notifikasi milik user yang login sebagai telah dibaca.
  */
-export const markAllAsRead = async (_req: Request, res: Response) => {
+export const markAllAsRead = async (req: AuthRequest, res: Response) => {
   try {
-    await markAllNotificationsAsRead();
+    const userId = (req as any).user?.id || null;
+    await markAllNotificationsAsRead(userId);
     res.json({ success: true, message: 'Semua notifikasi telah ditandai dibaca.' });
   } catch (err) {
     console.error('[markAllAsRead]', err);

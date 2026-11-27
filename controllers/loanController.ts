@@ -13,7 +13,8 @@ import {
   rejectExtension,
 } from '../models/loanModel';
 import { updateBookStatus } from '../models/bookModel';
-import { createNotification } from '../models/notificationModel';
+import { createUserNotification } from '../models/notificationModel';
+import { AuthRequest, extractUserId } from '../middleware/authMiddleware';
 
 const mapLoan = (loan: any) => ({
   ...loan,
@@ -118,7 +119,7 @@ export const requestLoan = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Kode buku dan judul buku wajib diisi.' });
     }
 
-    const userId = user?.id || null;
+    const userId = extractUserId(req as AuthRequest);
     const name = memberName || user?.name || 'Anggota Pustaka';
     const email = memberEmail || user?.email || 'anggota@rumahbudayaratna.id';
     const today = borrowDate || new Date().toISOString().slice(0, 10);
@@ -143,16 +144,18 @@ export const requestLoan = async (req: Request, res: Response) => {
       console.warn('[requestLoan] Gagal update status buku:', updateErr.message);
     }
 
-    // Otomatis simpan notifikasi peminjaman fisik jika tabel notifications tersedia
+    // Otomatis simpan notifikasi peminjaman buku
     try {
-      await createNotification(
+      await createUserNotification({
         userId,
-        `LOAN-${created.insertId}`,
-        'Peminjaman Buku Diajukan',
-        `Pengajuan peminjaman fisik "${title}" (${rackLocation || 'Pustaka'}) oleh ${name} telah berhasil diajukan.`,
-        'book',
-        'Peminjaman Diajukan'
-      );
+        orderId: `LOAN-${created.insertId}`,
+        title: 'Peminjaman Buku Berhasil',
+        message: `Buku '${title}' berhasil dipinjam.`,
+        type: 'book',
+        orderStatus: 'Dipinjam',
+        email,
+        phone: memberPhone || null,
+      });
     } catch (_) {}
 
     const rows = await getLoanById(created.insertId);
@@ -188,6 +191,17 @@ export const updateLoan = async (req: Request, res: Response) => {
       await returnLoan(loan.id);
       try {
         await updateBookStatus('TERSEDIA', loan.book_code, loan.title);
+      } catch (_) {}
+      try {
+        await createUserNotification({
+          userId: loan.user_id || null,
+          orderId: `LOAN-${loan.id}`,
+          title: 'Buku Telah Dikembalikan',
+          message: `Buku '${loan.title}' sudah dikembalikan. Terima kasih!`,
+          type: 'book',
+          orderStatus: 'Dikembalikan',
+          email: loan.member_email || null,
+        });
       } catch (_) {}
     } else if (action === 'approve_extension') {
       if (loan.extension_status !== 'pending') {

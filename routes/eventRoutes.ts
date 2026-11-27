@@ -1,4 +1,5 @@
 import express from 'express';
+import { optionalVerifyToken } from '../middleware/authMiddleware';
 import {
   getAllEvents,
   getEventById,
@@ -16,7 +17,7 @@ const router = express.Router();
 
 // REST API Agenda / Events
 router.get('/', getAllEvents);
-router.post('/workshop-proposal', createWorkshopProposal);
+router.post('/workshop-proposal', optionalVerifyToken, createWorkshopProposal);
 router.put('/:id/approve', approveEvent);
 router.put('/:id/reject', rejectEvent);
 router.get('/:id', getEventById);

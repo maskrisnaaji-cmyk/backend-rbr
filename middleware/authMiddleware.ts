@@ -62,4 +62,36 @@ export const checkRole = (allowedRoles: string[]) => {
   };
 };
 
-module.exports = { verifyToken, optionalVerifyToken, checkRole };
+/**
+ * Helper: Ekstrak user_id dari request (req.user, header Authorization Bearer, atau req.body)
+ * Tidak memblokir jika token kosong/tidak valid.
+ */
+export const extractUserId = (req: AuthRequest): number | null => {
+  if (req.user?.id) {
+    return Number(req.user.id) || null;
+  }
+
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as any;
+      if (decoded?.id) {
+        req.user = decoded;
+        return Number(decoded.id) || null;
+      }
+    } catch (_) {
+      // Abaikan jika token tidak valid/kadaluarsa
+    }
+  }
+
+  const bodyUserId = req.body?.user_id ?? req.body?.userId;
+  if (bodyUserId !== undefined && bodyUserId !== null && bodyUserId !== '') {
+    const parsed = Number(bodyUserId);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  return null;
+};
+
+module.exports = { verifyToken, optionalVerifyToken, checkRole, extractUserId };

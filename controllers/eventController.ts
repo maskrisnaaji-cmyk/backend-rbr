@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import pool from '../config/db';
+import { createUserNotification } from '../models/notificationModel';
+import { AuthRequest, extractUserId } from '../middleware/authMiddleware';
 import {
   getAllEvents as getAllEventsModel,
   getEventById as getEventByIdModel,
@@ -199,6 +201,20 @@ export const createEvent = async (req: Request, res: Response) => {
     );
 
     const createdRows = await getEventByIdModel(result.insertId);
+    const userId = extractUserId(req as AuthRequest);
+    try {
+      await createUserNotification({
+        userId,
+        orderId: `WORKSHOP-${result.insertId}`,
+        title: 'Pengajuan Lokakarya Terkirim',
+        message: `Pengajuan lokakarya '${title}' berhasil dikirim.`,
+        type: 'workshop',
+        orderStatus: 'Menunggu Persetujuan',
+        email: req.body?.organizer_email || req.body?.email || null,
+        phone: req.body?.organizer_contact || req.body?.phone || null,
+      });
+    } catch (_) {}
+
     res.status(201).json({
       message: 'Event berhasil ditambahkan.',
       data: createdRows[0] ? formatEventRow(createdRows[0]) : null,
@@ -511,6 +527,20 @@ export const createWorkshopProposal = async (req: Request, res: Response) => {
         description || '',
       ]
     );
+
+    const userId = extractUserId(req as AuthRequest);
+    try {
+      await createUserNotification({
+        userId,
+        orderId: `WORKSHOP-${result.insertId}`,
+        title: 'Pengajuan Lokakarya Terkirim',
+        message: `Pengajuan lokakarya '${title}' berhasil dikirim.`,
+        type: 'workshop',
+        orderStatus: 'Menunggu Persetujuan',
+        email: req.body?.organizer_email || req.body?.email || null,
+        phone: req.body?.organizer_contact || req.body?.phone || null,
+      });
+    } catch (_) {}
 
     res.status(201).json({
       message: 'Pengajuan lokakarya berhasil dikirim. Menunggu persetujuan admin.',

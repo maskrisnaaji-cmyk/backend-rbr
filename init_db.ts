@@ -350,6 +350,7 @@ async function initDb() {
   await ensureColumn(connection, 'orders', 'time', 'VARCHAR(50) NULL');
   await ensureColumn(connection, 'orders', 'payment_method', 'VARCHAR(50) NULL');
   await ensureColumn(connection, 'orders', 'expired_at', 'TIMESTAMP NULL');
+  await ensureColumn(connection, 'orders', 'user_id', 'INT NULL');
   await connection.query("UPDATE orders SET order_code = id WHERE order_code IS NULL OR order_code = ''");
 
   // ─── TABEL 10: AI_INSIGHTS (Riwayat Tanya-Jawab Chatbot AI Budaya) ────────────

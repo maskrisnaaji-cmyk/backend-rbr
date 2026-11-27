@@ -8,7 +8,8 @@ import {
   updateOrderStatusById,
   deleteOrderByIdOrCode,
 } from '../models/orderModel';
-import { createNotification } from '../models/notificationModel';
+import { createUserNotification } from '../models/notificationModel';
+import { AuthRequest, extractUserId } from '../middleware/authMiddleware';
 
 // ─── Helper: Auto-expire order kedai yang sudah melewati 30 menit ─────────────
 export async function autoExpireKedaiOrders() {
@@ -226,7 +227,7 @@ export const getOrderById = async (req: Request, res: Response) => {
  * POST /api/kedai/orders & /api/orders
  * Membuat atau memperbarui data pesanan dari aplikasi mobile
  */
-export const createOrder = async (req: Request, res: Response) => {
+export const createOrder = async (req: AuthRequest, res: Response) => {
   try {
     const {
       id,
@@ -238,6 +239,9 @@ export const createOrder = async (req: Request, res: Response) => {
       total,
       time,
     } = req.body;
+
+    // Ambil user_id dari JWT (jika login) atau dari body request
+    const userId: number | null = extractUserId(req);
 
     const rawCode = order_code || id || `RBR-${Math.floor(1000 + Math.random() * 9000)}`;
     const formattedCode = rawCode.startsWith('#') ? rawCode.substring(1) : rawCode;
@@ -284,22 +288,9 @@ export const createOrder = async (req: Request, res: Response) => {
       initialStatus,
       orderTime,
       paymentMethod,
-      serverExpiredAt
+      serverExpiredAt,
+      userId
     );
-
-    // Otomatis buat notifikasi pesanan baru
-    try {
-      await createNotification(
-        null,
-        rowId,
-        'Pesanan Baru Dibuat',
-        `Pesanan ${rowId} (${tableNum}) berhasil dibuat: ${itemsSummary}. Batas waktu pembayaran 30 menit.`,
-        'order',
-        'Pesanan Dibuat'
-      );
-    } catch (notifErr: any) {
-      console.warn('[createOrder] Warning saving notif:', notifErr.message);
-    }
 
     const created = await getOrderByIdOrCode(rowId);
     res.status(201).json({
@@ -317,7 +308,7 @@ export const createOrder = async (req: Request, res: Response) => {
  * POST /api/kedai/orders/:id/pay & /api/orders/:id/pay
  * Mengubah payment_status menjadi PAID dan otomatis mengubah status menjadi 'Disiapkan'
  */
-export const payOrder = async (req: Request, res: Response) => {
+export const payOrder = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -329,19 +320,24 @@ export const payOrder = async (req: Request, res: Response) => {
 
     const orderRow: any = existing[0];
     const targetId = orderRow.id;
+    // Ambil user_id: dari JWT → body → kolom user_id di baris order
+    const userId: number | null = extractUserId(req) || orderRow.user_id || null;
 
     await payOrderById(targetId);
 
-    // Kirim notifikasi pembayaran lunas & barista mulai meracik
+    // Kirim notifikasi pembayaran kedai selesai
     try {
-      await createNotification(
-        null,
-        targetId,
-        'Pembayaran Berhasil — Pesanan Disiapkan',
-        `Pesanan ${targetId} telah lunas. Barista sedang meracik pesanan Anda.`,
-        'order',
-        'Sedang Diproses'
-      );
+      const orderCode = orderRow.order_code || targetId;
+      await createUserNotification({
+        userId,
+        orderId: String(orderCode),
+        title: 'Pesanan Disiapkan',
+        message: `Pembayaran pesanan ${orderCode} berhasil. Pesanan Anda sedang disiapkan.`,
+        type: 'order',
+        orderStatus: 'Sedang Diproses',
+        email: orderRow.customer_email || req.body?.email || null,
+        phone: orderRow.customer_phone || req.body?.phone || null,
+      });
     } catch (notifErr: any) {
       console.warn('[payOrder] Warning saving notif:', notifErr.message);
     }
@@ -362,7 +358,7 @@ export const payOrder = async (req: Request, res: Response) => {
  * PUT/PATCH /api/kedai/orders/:id/status & /api/orders/:id/status
  * Memperbarui status alur pesanan (Menunggu, Disiapkan, Selesai)
  */
-export const updateOrderStatus = async (req: Request, res: Response) => {
+export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { status, order_status } = req.body;
@@ -377,15 +373,18 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
     let targetStatus = 'menunggu';
 
     const lower = inputStatus.toLowerCase();
-    if (lower === 'disiapkan' || lower === 'sedang diproses') {
+    if (lower === 'disiapkan' || lower === 'sedang diproses' || lower === 'diproses') {
       targetOrderStatus = 'Disiapkan';
       targetStatus = 'disiapkan';
-    } else if (lower === 'selesai' || lower === 'selesai dinikmati') {
+    } else if (lower === 'selesai' || lower === 'selesai dinikmati' || lower === 'completed') {
       targetOrderStatus = 'Selesai';
       targetStatus = 'selesai';
     } else if (lower === 'diantar' || lower === 'dalam pengantaran') {
       targetOrderStatus = 'Disiapkan';
       targetStatus = 'diantar';
+    } else if (lower === 'siap_diambil' || lower === 'siap diambil') {
+      targetOrderStatus = 'Disiapkan';
+      targetStatus = 'siap_diambil';
     }
 
     const existing = await getOrderByIdOrCode(id);
@@ -394,33 +393,50 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan.' });
     }
 
-    const targetId = existing[0].id;
+    const orderRow: any = existing[0];
+    const targetId = orderRow.id;
+    // Ambil user_id dari JWT (admin) atau dari baris order (user pemesan)
+    const userId: number | null = orderRow.user_id || null;
 
     await updateOrderStatusById(targetOrderStatus, targetStatus, targetId);
 
-    // Kirim notifikasi
+    // Kirim notifikasi ke user pemesan sesuai status baru
     let notifTitle = 'Update Status Pesanan';
     let notifStatus = targetOrderStatus;
     let notifMessage = `Pesanan ${targetId} diperbarui menjadi ${targetOrderStatus}.`;
 
-    if (targetOrderStatus === 'Disiapkan') {
+    if (lower === 'disiapkan' || lower === 'sedang diproses' || lower === 'diproses') {
       notifTitle = 'Pesanan Sedang Disiapkan';
       notifMessage = `Pesanan ${targetId} sedang diracik oleh Barista kami.`;
+      notifStatus = 'Sedang Diproses';
+    } else if (lower === 'diantar' || lower === 'dalam pengantaran') {
+      notifTitle = 'Pesanan Diantar';
+      notifMessage = `Pesanan ${targetId} sedang diantarkan oleh staf kami.`;
+      notifStatus = 'Dalam Pengantaran';
+    } else if (lower === 'siap_diambil' || lower === 'siap diambil') {
+      notifTitle = 'Pesanan Siap Diambil';
+      notifMessage = `Pesanan ${targetId} sudah siap diambil. Silakan ke kasir.`;
+      notifStatus = 'Siap Diambil';
     } else if (targetOrderStatus === 'Selesai') {
-      notifTitle = 'Pesanan Selesai';
-      notifMessage = `Pesanan ${targetId} telah selesai. Terima kasih telah berkunjung ke Kedai RBR!`;
+      const orderCode = orderRow.order_code || targetId;
+      notifTitle = 'Pesanan Selesai & Diantar';
+      notifMessage = `Pesanan ${orderCode} sudah selesai dan sudah diantar. Terima kasih!`;
+      notifStatus = 'Selesai';
+      try {
+        await createUserNotification({
+          userId,
+          orderId: String(orderCode),
+          title: notifTitle,
+          message: notifMessage,
+          type: 'order',
+          orderStatus: notifStatus,
+          email: orderRow.customer_email || null,
+          phone: orderRow.customer_phone || null,
+        });
+      } catch (notifErr: any) {
+        console.warn('[updateOrderStatus] Warning saving notif:', notifErr.message);
+      }
     }
-
-    try {
-      await createNotification(
-        null,
-        targetId,
-        notifTitle,
-        notifMessage,
-        'order',
-        notifStatus
-      );
-    } catch (_) {}
 
     const updated = await getOrderByIdOrCode(targetId);
     res.json({

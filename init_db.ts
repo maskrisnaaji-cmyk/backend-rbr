@@ -270,6 +270,8 @@ async function initDb() {
   await ensureColumn(connection, 'transactions', 'transaction_status', "VARCHAR(50) NOT NULL DEFAULT 'pending'");
   await ensureColumn(connection, 'transactions', 'va_number', 'VARCHAR(100) NULL');
   await ensureColumn(connection, 'transactions', 'bank', 'VARCHAR(50) NULL');
+  await ensureColumn(connection, 'transactions', 'biller_code', 'VARCHAR(50) NULL');
+  await ensureColumn(connection, 'transactions', 'bill_key', 'VARCHAR(100) NULL');
   await ensureColumn(connection, 'transactions', 'qr_string', 'TEXT NULL');
   await ensureColumn(connection, 'transactions', 'qr_url', 'TEXT NULL');
   await ensureColumn(connection, 'transactions', 'snap_token', 'VARCHAR(255) NULL');

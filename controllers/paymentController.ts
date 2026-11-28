@@ -246,10 +246,22 @@ export const createCharge = async (req: Request, res: Response) => {
     const pt = (payment_type || '').toLowerCase().trim();
     const isQris = pt === 'qris' || pt.includes('qris');
     const isCash = ['cash', 'kasir', 'tunai', 'bayar_di_kasir', 'bayar_kasir'].includes(pt);
-    const isVa = ['bank_transfer', 'va', 'virtual_account', 'echannel', 'permata'].includes(pt);
-    const bankName = (bank || 'bca').toLowerCase();
+    const isVa = ['bank_transfer', 'va', 'virtual_account', 'echannel', 'permata', 'bca', 'bni', 'bri', 'cimb', 'mandiri'].includes(pt) || (!isQris && !isCash && !!bank);
 
-    // ── Validasi Metode Pembayaran Kedai: mendukung QRIS, Virtual Account (VA), dan Bayar di Kasir ──
+    // Tentukan bank yang dipilih (bca, bni, bri, mandiri, permata, cimb)
+    let selectedBank = (bank || '').toLowerCase().trim();
+    if (!selectedBank && isVa) {
+      if (['bca', 'bni', 'bri', 'mandiri', 'permata', 'cimb', 'echannel'].includes(pt)) {
+        selectedBank = pt;
+      }
+    }
+    if (!selectedBank) {
+      selectedBank = 'bca';
+    }
+    if (selectedBank === 'echannel') selectedBank = 'mandiri';
+    if (selectedBank === 'cimb_niaga' || selectedBank === 'cimbniaga') selectedBank = 'cimb';
+
+    // ── Validasi Metode Pembayaran Kedai: mendukung QRIS, Virtual Account (Multi-Bank), dan Bayar di Kasir ──
     if (isKedai && !isQris && !isCash && !isVa) {
       return res.status(400).json({
         success: false,
@@ -309,6 +321,13 @@ export const createCharge = async (req: Request, res: Response) => {
           coupon_code: appliedCoupon ? appliedCoupon.code : null,
           transaction_status: 'pending',
           status: 'pending',
+          bank: 'kasir',
+          va_number: null,
+          biller_code: null,
+          bill_key: null,
+          qr_code_url: null,
+          qr_url: null,
+          qr_string: null,
           created_at: createdAt.toISOString(),
           expired_at: expiredAt.toISOString(),
           expiry_duration_seconds: 1800,
@@ -349,7 +368,7 @@ export const createCharge = async (req: Request, res: Response) => {
       }
     }
 
-    // Susun parameter sesuai Core API Midtrans (QRIS dengan batas waktu 30 menit)
+    // Susun parameter sesuai Core API Midtrans (QRIS dengan batas waktu 30 menit atau Multi-Bank VA Sandbox)
     if (isQris) {
       chargeParameter.payment_type = 'qris';
       chargeParameter.qris = { acquirer: 'gopay' };
@@ -358,46 +377,68 @@ export const createCharge = async (req: Request, res: Response) => {
         unit: 'minute',
       };
     } else {
-      // Bank Transfer VA (hanya untuk tiket atau modul lain yang relevan)
-      if (bankName === 'mandiri' || bankName === 'echannel') {
+      // Virtual Account Sandbox: BCA, BNI, BRI, CIMB, Mandiri (echannel), Permata
+      if (selectedBank === 'mandiri') {
         chargeParameter.payment_type = 'echannel';
         chargeParameter.echannel = {
           bill_info1: 'Pembayaran RBR',
           bill_info2: 'Rumah Budaya Ratna',
         };
-      } else if (bankName === 'permata') {
+      } else if (selectedBank === 'permata') {
         chargeParameter.payment_type = 'permata';
-      } else {
-        // Default bca / bni / bri
+      } else if (['bca', 'bni', 'bri', 'cimb'].includes(selectedBank)) {
         chargeParameter.payment_type = 'bank_transfer';
-        chargeParameter.bank_transfer = { bank: bankName };
+        chargeParameter.bank_transfer = { bank: selectedBank };
+      } else {
+        chargeParameter.payment_type = 'bank_transfer';
+        chargeParameter.bank_transfer = { bank: selectedBank };
       }
+      chargeParameter.custom_expiry = {
+        expiry_duration: 30,
+        unit: 'minute',
+      };
     }
 
-    console.log(`[CoreApi Charge] Mengirim tagihan ${chargeParameter.payment_type} untuk order ${cleanOrderId}...`);
+    console.log(`[CoreApi Charge] Mengirim tagihan ${chargeParameter.payment_type} (${selectedBank}) untuk order ${cleanOrderId}...`);
     const chargeResponse = await coreApi.charge(chargeParameter);
 
     // Ekstraksi data mentah dari respons Midtrans
-    let extractedVaNumber = null;
-    let extractedBillKey = null;
-    let extractedBillerCode = null;
-    let extractedQrString = chargeResponse.qr_string || null;
-    let extractedQrUrl = null;
+    let extractedVaNumber: string | null = null;
+    let extractedBillKey: string | null = null;
+    let extractedBillerCode: string | null = null;
+    let extractedBank: string = selectedBank;
 
-    if (chargeResponse.va_numbers && chargeResponse.va_numbers.length > 0) {
-      extractedVaNumber = chargeResponse.va_numbers[0].va_number;
-    } else if (chargeResponse.permata_va_number) {
-      extractedVaNumber = chargeResponse.permata_va_number;
-    } else if (chargeResponse.bill_key) {
-      extractedBillKey = chargeResponse.bill_key;
-      extractedBillerCode = chargeResponse.biller_code;
-      extractedVaNumber = `${chargeResponse.biller_code} - ${chargeResponse.bill_key}`;
+    // 1. Array va_numbers (BCA, BNI, BRI, CIMB)
+    if (Array.isArray(chargeResponse.va_numbers) && chargeResponse.va_numbers.length > 0) {
+      extractedVaNumber = chargeResponse.va_numbers[0].va_number || null;
+      if (chargeResponse.va_numbers[0].bank) {
+        extractedBank = String(chargeResponse.va_numbers[0].bank).toLowerCase();
+      }
     }
+    // 2. Permata VA (permata_va_number)
+    else if (chargeResponse.permata_va_number) {
+      extractedVaNumber = chargeResponse.permata_va_number;
+      extractedBank = 'permata';
+    }
+
+    // 3. Mandiri Bill (bill_key & biller_code)
+    if (chargeResponse.bill_key || chargeResponse.biller_code) {
+      extractedBillKey = chargeResponse.bill_key || null;
+      extractedBillerCode = chargeResponse.biller_code || null;
+      extractedBank = 'mandiri';
+      if (!extractedVaNumber) {
+        extractedVaNumber = chargeResponse.bill_key || null;
+      }
+    }
+
+    // 4. Ekstraksi QRIS (actions -> generate-qr-code URL & qr_string)
+    let extractedQrString: string | null = chargeResponse.qr_string || null;
+    let extractedQrCodeUrl: string | null = null;
 
     if (Array.isArray(chargeResponse.actions)) {
       const qrAction = chargeResponse.actions.find((a: any) => a.name === 'generate-qr-code') || chargeResponse.actions[0];
-      if (qrAction) {
-        extractedQrUrl = qrAction.url;
+      if (qrAction && qrAction.url) {
+        extractedQrCodeUrl = qrAction.url;
       }
     }
 
@@ -406,19 +447,21 @@ export const createCharge = async (req: Request, res: Response) => {
       await createTransactionModel(
         cleanOrderId,
         chargeParameter.payment_type,
-        isQris ? 'qris' : `va_${bankName}`,
+        isQris ? 'qris' : `va_${extractedBank}`,
         finalAmount,
         'pending',
         'pending',
         extractedVaNumber || null,
-        isQris ? 'qris' : bankName,
+        isQris ? 'qris' : extractedBank,
         extractedQrString || null,
-        extractedQrUrl || null,
+        extractedQrCodeUrl || null,
         customer_name || 'Pengunjung RBR',
         customer_email || 'customer@rumahbudayaratna.id',
         order_type || (isKedai ? 'kedai' : 'ticket'),
         chargeParameter.item_details ? JSON.stringify(chargeParameter.item_details) : (items ? JSON.stringify(items) : ''),
-        expiredAt
+        expiredAt,
+        extractedBillerCode,
+        extractedBillKey
       );
     } catch (dbErr: any) {
       console.warn('[paymentController] Simpan transactions error:', dbErr.message);
@@ -427,7 +470,7 @@ export const createCharge = async (req: Request, res: Response) => {
     // Jika pesanan kedai, sinkronkan payment_method dan expired_at ke tabel orders
     if (isKedai) {
       try {
-        const orderPaymentMethod = isQris ? 'qris' : (isCash ? 'kasir' : `va_${bankName}`);
+        const orderPaymentMethod = isQris ? 'qris' : (isCash ? 'kasir' : `va_${extractedBank}`);
         await pool.query(
           `UPDATE orders
            SET payment_method = ?,
@@ -451,7 +494,7 @@ export const createCharge = async (req: Request, res: Response) => {
           finalAmount,
           'Menunggu Pembayaran',
           cleanOrderId,
-          isQris ? 'QRIS' : (isCash ? 'Bayar di Kasir' : `Transfer VA ${bankName.toUpperCase()}`),
+          isQris ? 'QRIS' : (isCash ? 'Bayar di Kasir' : `Transfer VA ${extractedBank.toUpperCase()}`),
           activeTierInfo?.id || null,
           activeTierInfo?.tier_name || null
         );
@@ -476,24 +519,26 @@ export const createCharge = async (req: Request, res: Response) => {
       success: true,
       message: isQris
         ? 'Transaksi QRIS Midtrans berhasil dibuat.'
-        : 'Transaksi Midtrans Core API berhasil dibuat.',
+        : `Transaksi VA ${extractedBank.toUpperCase()} Midtrans berhasil dibuat.`,
       data: {
         order_id: cleanOrderId,
         payment_type: chargeParameter.payment_type,
-        payment_method: isQris ? 'qris' : `va_${bankName}`,
+        payment_method: isQris ? 'qris' : `va_${extractedBank}`,
         gross_amount: finalAmount,
         subtotal: amount,
         discount_amount: discountAmount,
         coupon_code: appliedCoupon ? appliedCoupon.code : null,
         transaction_status: chargeResponse.transaction_status || 'pending',
         status: 'pending',
+        bank: extractedBank,
         va_number: extractedVaNumber,
-        bill_key: extractedBillKey,
         biller_code: extractedBillerCode,
-        bank: bankName,
+        bill_key: extractedBillKey,
+        qr_code_url: extractedQrCodeUrl,
+        qr_url: extractedQrCodeUrl,
         qr_string: extractedQrString,
-        qr_url: extractedQrUrl,
         actions: chargeResponse.actions || [],
+        va_numbers: chargeResponse.va_numbers || (extractedVaNumber ? [{ bank: extractedBank, va_number: extractedVaNumber }] : []),
         created_at: createdAt.toISOString(),
         expired_at: expiredAt.toISOString(),
         expiry_duration_seconds: 1800,
@@ -501,6 +546,15 @@ export const createCharge = async (req: Request, res: Response) => {
         is_paid: false,
         raw: chargeResponse,
       },
+      // Top-level aliases for direct client access
+      order_id: cleanOrderId,
+      bank: extractedBank,
+      va_number: extractedVaNumber,
+      biller_code: extractedBillerCode,
+      bill_key: extractedBillKey,
+      qr_code_url: extractedQrCodeUrl,
+      qr_url: extractedQrCodeUrl,
+      qr_string: extractedQrString,
     });
   } catch (err: any) {
     console.error('[paymentController] createCharge error:', err.message);
@@ -779,20 +833,33 @@ export const checkStatus = async (req: Request, res: Response) => {
     const rows = await getTransactionByOrderId(orderId);
     const tx: any = rows[0] || null;
 
+    // Periksa juga status dari tabel orders jika pesanan kedai
+    const [orderCheckRows]: any = await pool.execute(
+      'SELECT id, order_code, payment_status, order_status, status, payment_method, total_price FROM orders WHERE id = ? OR order_code = ? LIMIT 1',
+      [orderId, orderId]
+    );
+    const orderRecord: any = orderCheckRows && orderCheckRows.length > 0 ? orderCheckRows[0] : null;
+
+    const isCashTx = (tx && (tx.payment_type === 'cash' || tx.payment_method === 'kasir' || tx.bank === 'kasir' || tx.payment_method === 'Bayar di Kasir')) ||
+                     (orderRecord && (orderRecord.payment_method === 'kasir' || orderRecord.payment_method === 'cash'));
+
     const now = new Date();
-    const txCreatedAt = tx?.created_at ? new Date(tx.created_at) : null;
+    const txCreatedAt = tx?.created_at ? new Date(tx.created_at) : (orderRecord?.created_at ? new Date(orderRecord.created_at) : null);
     const txExpiredAt = tx?.expired_at
       ? new Date(tx.expired_at)
-      : (txCreatedAt ? new Date(txCreatedAt.getTime() + 30 * 60 * 1000) : null);
+      : (orderRecord?.expired_at
+        ? new Date(orderRecord.expired_at)
+        : (txCreatedAt ? new Date(txCreatedAt.getTime() + 30 * 60 * 1000) : null));
 
     const isPastExpiry = txExpiredAt ? now.getTime() > txExpiredAt.getTime() : false;
-    let isPaid = tx ? (tx.transaction_status === 'settlement' || tx.status === 'paid') : false;
+    let isPaid = (tx && (tx.transaction_status === 'settlement' || tx.status === 'paid')) ||
+                 (orderRecord && orderRecord.payment_status === 'PAID');
     let isExpired = false;
-    let txStatus = isPaid ? 'settlement' : (tx?.transaction_status || 'pending');
+    let txStatus = isPaid ? 'settlement' : (tx?.transaction_status || (orderRecord?.payment_status === 'EXPIRED' ? 'expire' : 'pending'));
     let statusResponse: any = null;
 
-    // 2. Jika belum lunas lokal, cek status ke Midtrans API
-    if (!isPaid) {
+    // 2. Jika belum lunas lokal dan BUKAN metode Bayar di Kasir, cek status ke Midtrans API
+    if (!isPaid && !isCashTx) {
       try {
         statusResponse = await coreApi.transaction.status(orderId);
         const midtransTxStatus = statusResponse.transaction_status || 'pending';
@@ -894,6 +961,39 @@ export const checkStatus = async (req: Request, res: Response) => {
       }
     }
 
+    // Ekstraksi data normalisasi respons Midtrans (VA & QRIS)
+    let respBank = tx?.bank || (isCashTx ? 'kasir' : null);
+    let respVaNumber = tx?.va_number || null;
+    let respBillerCode = (tx as any)?.biller_code || null;
+    let respBillKey = (tx as any)?.bill_key || null;
+    let respQrCodeUrl = tx?.qr_url || null;
+    let respQrString = tx?.qr_string || null;
+
+    if (statusResponse) {
+      if (Array.isArray(statusResponse.va_numbers) && statusResponse.va_numbers.length > 0) {
+        respVaNumber = statusResponse.va_numbers[0].va_number || respVaNumber;
+        respBank = statusResponse.va_numbers[0].bank ? String(statusResponse.va_numbers[0].bank).toLowerCase() : respBank;
+      } else if (statusResponse.permata_va_number) {
+        respVaNumber = statusResponse.permata_va_number || respVaNumber;
+        respBank = 'permata';
+      }
+      if (statusResponse.bill_key || statusResponse.biller_code) {
+        respBillKey = statusResponse.bill_key || respBillKey;
+        respBillerCode = statusResponse.biller_code || respBillerCode;
+        respBank = 'mandiri';
+        if (!respVaNumber) respVaNumber = statusResponse.bill_key;
+      }
+      if (statusResponse.qr_string) {
+        respQrString = statusResponse.qr_string;
+      }
+      if (Array.isArray(statusResponse.actions)) {
+        const qrAct = statusResponse.actions.find((a: any) => a.name === 'generate-qr-code') || statusResponse.actions[0];
+        if (qrAct && qrAct.url) {
+          respQrCodeUrl = qrAct.url;
+        }
+      }
+    }
+
     const remainingSeconds = !isPaid && txExpiredAt && !isExpired
       ? Math.max(0, Math.floor((txExpiredAt.getTime() - now.getTime()) / 1000))
       : 0;
@@ -905,11 +1005,16 @@ export const checkStatus = async (req: Request, res: Response) => {
         is_paid: isPaid,
         is_expired: isExpired,
         order_id: orderId,
-        payment_type: tx ? (tx.payment_type || tx.payment_method) : null,
-        gross_amount: tx ? tx.gross_amount : null,
-        va_number: tx ? tx.va_number : null,
-        qr_string: tx ? tx.qr_string : null,
-        qr_url: tx ? tx.qr_url : null,
+        payment_type: tx ? (tx.payment_type || tx.payment_method) : (isCashTx ? 'cash' : null),
+        payment_method: tx ? tx.payment_method : (isCashTx ? 'Bayar di Kasir' : null),
+        gross_amount: tx ? tx.gross_amount : (orderRecord ? orderRecord.total_price : null),
+        bank: respBank,
+        va_number: respVaNumber,
+        biller_code: respBillerCode,
+        bill_key: respBillKey,
+        qr_code_url: respQrCodeUrl,
+        qr_url: respQrCodeUrl,
+        qr_string: respQrString,
         created_at: txCreatedAt ? txCreatedAt.toISOString() : null,
         expired_at: txExpiredAt ? txExpiredAt.toISOString() : null,
         remaining_seconds: remainingSeconds,
@@ -922,11 +1027,27 @@ export const checkStatus = async (req: Request, res: Response) => {
         transaction_status: txStatus,
         is_paid: isPaid,
         is_expired: isExpired,
+        bank: respBank,
+        va_number: respVaNumber,
+        biller_code: respBillerCode,
+        bill_key: respBillKey,
+        qr_code_url: respQrCodeUrl,
+        qr_url: respQrCodeUrl,
+        qr_string: respQrString,
         expired_at: txExpiredAt ? txExpiredAt.toISOString() : null,
         remaining_seconds: remainingSeconds,
         transaction: tx,
         midtrans_response: statusResponse,
       },
+      // Top-level aliases for direct access
+      order_id: orderId,
+      bank: respBank,
+      va_number: respVaNumber,
+      biller_code: respBillerCode,
+      bill_key: respBillKey,
+      qr_code_url: respQrCodeUrl,
+      qr_url: respQrCodeUrl,
+      qr_string: respQrString,
     });
   } catch (err: any) {
     console.error('[paymentController] checkStatus safe catch:', err.message);

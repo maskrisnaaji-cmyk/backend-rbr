@@ -158,6 +158,13 @@ const confirmPayment = async (req, res) => {
     );
     if (!result.affectedRows) return res.status(404).json({ success: false, message: 'Pesanan tidak ditemukan.' });
 
+    try {
+      await pool.execute(
+        "UPDATE transactions SET status = 'paid', transaction_status = 'settlement', updated_at = NOW() WHERE order_id = ?",
+        [id]
+      );
+    } catch (_) {}
+
     const [rows] = await pool.execute('SELECT * FROM orders WHERE id = ?', [id]);
     const orderRow = rows[0];
     const userId = orderRow?.user_id || null;

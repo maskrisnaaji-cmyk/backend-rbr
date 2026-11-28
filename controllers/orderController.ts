@@ -325,6 +325,15 @@ export const payOrder = async (req: AuthRequest, res: Response) => {
 
     await payOrderById(targetId);
 
+    // Sinkronkan tabel transactions jika ada transaksi yang tercatat untuk pesanan ini
+    try {
+      const orderCode = orderRow.order_code || targetId;
+      await pool.execute(
+        "UPDATE transactions SET status = 'paid', transaction_status = 'settlement', updated_at = NOW() WHERE order_id = ? OR order_id = ?",
+        [targetId, orderCode]
+      );
+    } catch (_) {}
+
     // Kirim notifikasi pembayaran kedai selesai
     try {
       const orderCode = orderRow.order_code || targetId;

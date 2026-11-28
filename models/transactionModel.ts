@@ -14,6 +14,8 @@ export interface Transaction {
   transaction_status?: string | null;
   va_number?: string | null;
   bank?: string | null;
+  biller_code?: string | null;
+  bill_key?: string | null;
   qr_string?: string | null;
   qr_url?: string | null;
   payment_response?: string | null;
@@ -75,13 +77,15 @@ export const createTransaction = async (
   customerEmail: string | null,
   orderType: string,
   itemsJson: string,
-  expiredAt: Date | string | null = null
+  expiredAt: Date | string | null = null,
+  billerCode: string | null = null,
+  billKey: string | null = null
 ) => {
   try {
     const [result] = await pool.execute(
       `INSERT INTO transactions 
-        (order_id, payment_type, payment_method, gross_amount, status, transaction_status, va_number, bank, qr_string, qr_url, customer_name, customer_email, order_type, items_json, expired_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (order_id, payment_type, payment_method, gross_amount, status, transaction_status, va_number, bank, qr_string, qr_url, customer_name, customer_email, order_type, items_json, expired_at, biller_code, bill_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         orderId,
         paymentType,
@@ -98,6 +102,8 @@ export const createTransaction = async (
         orderType,
         itemsJson,
         expiredAt,
+        billerCode,
+        billKey,
       ]
     );
     return result as any;
@@ -105,8 +111,8 @@ export const createTransaction = async (
     if (err.code === 'ER_BAD_FIELD_ERROR' || err.message?.includes('Unknown column')) {
       const [result] = await pool.execute(
         `INSERT INTO transactions 
-          (order_id, payment_type, payment_method, gross_amount, status, transaction_status, va_number, bank, qr_string, qr_url, customer_name, customer_email, order_type, items_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (order_id, payment_type, payment_method, gross_amount, status, transaction_status, va_number, bank, qr_string, qr_url, customer_name, customer_email, order_type, items_json, expired_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           orderId,
           paymentType,
@@ -122,6 +128,7 @@ export const createTransaction = async (
           customerEmail,
           orderType,
           itemsJson,
+          expiredAt,
         ]
       );
       return result as any;

@@ -261,7 +261,7 @@ async function initDb() {
       author VARCHAR(100) NOT NULL,
       category VARCHAR(100) NULL DEFAULT 'Koleksi Sastra',
       rack_location VARCHAR(50) NULL DEFAULT 'RAK 1A',
-      status VARCHAR(50) NOT NULL DEFAULT 'Tersedia',
+      status VARCHAR(50) NOT NULL DEFAULT 'TERSEDIA',
       borrower VARCHAR(100) NULL DEFAULT '-',
       cover_image VARCHAR(255) NULL,
       synopsis TEXT NULL,
@@ -272,7 +272,7 @@ async function initDb() {
   await ensureColumn(connection, 'books', 'code', 'VARCHAR(50) NULL');
   await ensureColumn(connection, 'books', 'category', "VARCHAR(100) NULL DEFAULT 'Koleksi Sastra'");
   await ensureColumn(connection, 'books', 'rack_location', "VARCHAR(50) NULL DEFAULT 'RAK 1A'");
-  await ensureColumn(connection, 'books', 'status', "VARCHAR(50) NULL DEFAULT 'Tersedia'");
+  await ensureColumn(connection, 'books', 'status', "VARCHAR(50) NULL DEFAULT 'TERSEDIA'");
   await ensureColumn(connection, 'books', 'borrower', "VARCHAR(100) NULL DEFAULT '-'");
   await ensureColumn(connection, 'books', 'cover_image', 'VARCHAR(255) NULL');
   await ensureColumn(connection, 'books', 'synopsis', 'TEXT NULL');
@@ -458,11 +458,48 @@ async function initDb() {
     console.log('🌱 Seeding initial books...');
     await connection.query(`
       INSERT INTO books (code, title, author, category, rack_location, status, borrower, cover_image, synopsis, year) VALUES
-      ('NSS-001', 'Dokumen Jibril', 'W.S. Rendra', 'KOLEKSI KHUSUS SASTRA KLASIK', 'RAK 3A', 'Tersedia', '-', 'assets/images/dokumen_jibril.jpg', 'Naskah Dokumen Jibril merupakan salah satu karya monumental W.S. Rendra yang merekam dialektika batin kemanusiaan, kritik sosial yang tajam, serta pergolakan spiritual.', '1978'),
-      ('NSS-008', 'Anjing-Anjing Menyerbu Lek Zul', 'C.R. Tanujaya', 'PROSA KONTEMPORER', 'RAK 3B', 'Dipinjam', 'Dimas Anggara', 'assets/images/anjing_anjing_menyerbu_lek_zul.jpg', 'Sebuah narasi satir mengenai dinamika sosial masyarakat desa yang menghadapi benturan modernitas dan intrik kuasa.', '1984'),
-      ('NSS-015', 'Laki-Laki Yang Kawin Dengan Peri', 'Eka Kurniawan', 'SASTRA REALISME MAGIS', 'RAK 2C', 'Tersedia', '-', 'assets/images/laki_laki_yang_kawin_dengan_peri.jpg', 'Kumpulan cerita pendek yang meramu realisme magis, mitos lokal nusantara, humor gelap, dan kepedihan hidup sehari-hari.', '2015'),
-      ('NSS-012', 'Lipstik Di Tas Doni', 'Sujiwo Tejo', 'KOLOM & ESAI BUDAYA', 'RAK 1A', 'Dipinjam', 'Siti Rahma', 'assets/images/lipstik_di_tas_doni.jpg', 'Kumpulan esai reflektif dan celoteh khas sang Dalang Wayang dan Budayawan yang membongkar kemunafikan sosial.', '2007')
+      ('NSS-001', 'Dokumen Jibril', 'W.S. Rendra', 'KOLEKSI KHUSUS SASTRA KLASIK', 'RAK 3A', 'TERSEDIA', '-', 'assets/images/dokumen_jibril.jpg', 'Naskah Dokumen Jibril merupakan salah satu karya monumental W.S. Rendra yang merekam dialektika batin kemanusiaan, kritik sosial yang tajam, serta pergolakan spiritual.', '1978'),
+      ('NSS-008', 'Anjing-Anjing Menyerbu Lek Zul', 'C.R. Tanujaya', 'PROSA KONTEMPORER', 'RAK 3B', 'TERSEDIA', '-', 'assets/images/anjing_anjing_menyerbu_lek_zul.jpg', 'Sebuah narasi satir mengenai dinamika sosial masyarakat desa yang menghadapi benturan modernitas dan intrik kuasa.', '1984'),
+      ('NSS-015', 'Laki-Laki Yang Kawin Dengan Peri', 'Eka Kurniawan', 'SASTRA REALISME MAGIS', 'RAK 2C', 'TERSEDIA', '-', 'assets/images/laki_laki_yang_kawin_dengan_peri.jpg', 'Kumpulan cerita pendek yang meramu realisme magis, mitos lokal nusantara, humor gelap, dan kepedihan hidup sehari-hari.', '2015'),
+      ('NSS-012', 'Lipstik Di Tas Doni', 'Sujiwo Tejo', 'KOLOM & ESAI BUDAYA', 'RAK 1A', 'TERSEDIA', '-', 'assets/images/lipstik_di_tas_doni.jpg', 'Kumpulan esai reflektif dan celoteh khas sang Dalang Wayang dan Budayawan yang membongkar kemunafikan sosial.', '2007')
     `);
+  }
+
+  // ─── SINKRONISASI STATUS KETERSEDIAAN BUKU & PEMINJAMAN ───────────────────────
+  try {
+    console.log('🔄 Menyinkronkan status ketersediaan buku dengan transaksi peminjaman...');
+    // 1. Buku yang tidak memiliki transaksi aktif di book_loans direset menjadi TERSEDIA
+    await connection.query(`
+      UPDATE books 
+      SET status = 'TERSEDIA', borrower = '-' 
+      WHERE (
+        code IS NULL OR code = '' OR code NOT IN (
+          SELECT book_code FROM book_loans 
+          WHERE status IN ('active', 'overdue', 'requested') AND book_code IS NOT NULL
+        )
+      ) AND (
+        title NOT IN (
+          SELECT title FROM book_loans 
+          WHERE status IN ('active', 'overdue', 'requested') AND title IS NOT NULL
+        )
+      )
+    `);
+
+    // 2. Buku yang memiliki transaksi aktif di book_loans diset menjadi DIPINJAM
+    await connection.query(`
+      UPDATE books b
+      JOIN (
+        SELECT book_code, title, member_name 
+        FROM book_loans 
+        WHERE status IN ('active', 'overdue', 'requested')
+        ORDER BY id DESC
+      ) l ON (b.code = l.book_code OR b.title = l.title)
+      SET b.status = 'DIPINJAM', 
+          b.borrower = COALESCE(NULLIF(l.member_name, ''), b.borrower, 'Anggota Pustaka')
+    `);
+    console.log('✅ Sinkronisasi status buku dan peminjaman selesai.');
+  } catch (syncErr: any) {
+    console.warn('⚠️ Catatan sinkronisasi status buku:', syncErr.message);
   }
 
   // Pembersihan order dummy awal hanya saat development

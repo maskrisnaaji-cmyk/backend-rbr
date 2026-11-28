@@ -101,6 +101,47 @@ export const getAllLoans = async () => {
   return rows as BookLoan[];
 };
 
+export const findActiveLoanByBook = async (bookCode: string, title?: string) => {
+  const [rows] = await pool.execute(
+    `SELECT * FROM book_loans 
+     WHERE (book_code = ? OR title = ?) 
+       AND status IN ('active', 'overdue', 'requested')
+     LIMIT 1`,
+    [bookCode, title || bookCode]
+  );
+  return rows as BookLoan[];
+};
+
+export const approveLoanRequest = async (id: any) => {
+  const [result] = await pool.execute(
+    `UPDATE book_loans 
+     SET request_status = 'approved', status = 'active', request_reviewed_at = NOW() 
+     WHERE id = ?`,
+    [id]
+  );
+  return result as any;
+};
+
+export const rejectLoanRequest = async (id: any) => {
+  const [result] = await pool.execute(
+    `UPDATE book_loans 
+     SET request_status = 'rejected', status = 'rejected', request_reviewed_at = NOW() 
+     WHERE id = ?`,
+    [id]
+  );
+  return result as any;
+};
+
+export const cancelLoan = async (id: any) => {
+  const [result] = await pool.execute(
+    `UPDATE book_loans 
+     SET status = 'cancelled', request_status = 'cancelled', returned_at = NOW() 
+     WHERE id = ?`,
+    [id]
+  );
+  return result as any;
+};
+
 export const returnLoan = async (id: any) => {
   const [result] = await pool.execute(
     `UPDATE book_loans SET status = 'returned', returned_at = NOW(), extension_status = 'none' WHERE id = ?`,

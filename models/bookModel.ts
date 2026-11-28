@@ -102,16 +102,68 @@ export const deleteBook = async (id: any) => {
   return result as any;
 };
 
+export const getBookByCodeOrTitle = async (code: string, title?: string) => {
+  const [rows] = await pool.execute(
+    'SELECT * FROM books WHERE code = ? OR title = ? LIMIT 1',
+    [code, title || code]
+  );
+  return rows as Book[];
+};
+
 export const updateBookStatus = async (
   status: string,
   identifier: string | number,
-  title?: string
+  title?: string,
+  borrower?: string | null
 ) => {
+  if (borrower !== undefined) {
+    const [result] = await pool.execute(
+      `UPDATE books SET status = ?, borrower = ? WHERE id = ? OR code = ? OR title = ?`,
+      [status, borrower, identifier, identifier, title || identifier]
+    );
+    return result as any;
+  }
   const [result] = await pool.execute(
     `UPDATE books SET status = ? WHERE id = ? OR code = ? OR title = ?`,
     [status, identifier, identifier, title || identifier]
   );
   return result as any;
+};
+
+export const syncBookAvailabilityModel = async () => {
+  try {
+    // 1. Sinkronisasi buku tanpa transaksi peminjaman aktif ke TERSEDIA dan peminjam '-'
+    await pool.query(`
+      UPDATE books 
+      SET status = 'TERSEDIA', borrower = '-' 
+      WHERE (
+        code IS NULL OR code = '' OR code NOT IN (
+          SELECT book_code FROM book_loans 
+          WHERE status IN ('active', 'overdue', 'requested') AND book_code IS NOT NULL
+        )
+      ) AND (
+        title NOT IN (
+          SELECT title FROM book_loans 
+          WHERE status IN ('active', 'overdue', 'requested') AND title IS NOT NULL
+        )
+      )
+    `);
+
+    // 2. Pastikan buku dengan transaksi aktif diset ke DIPINJAM
+    await pool.query(`
+      UPDATE books b
+      JOIN (
+        SELECT book_code, title, member_name 
+        FROM book_loans 
+        WHERE status IN ('active', 'overdue', 'requested')
+        ORDER BY id DESC
+      ) l ON (b.code = l.book_code OR b.title = l.title)
+      SET b.status = 'DIPINJAM', 
+          b.borrower = COALESCE(NULLIF(l.member_name, ''), b.borrower, 'Anggota Pustaka')
+    `);
+  } catch (err: any) {
+    console.warn('[syncBookAvailabilityModel] Warning:', err.message);
+  }
 };
 
 export const updateBookCover = async (url: string, entityId: number | string) => {

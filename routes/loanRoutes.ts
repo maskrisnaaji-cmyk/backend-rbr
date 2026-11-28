@@ -6,10 +6,12 @@ import {
   requestExtension,
   getAllLoans,
   updateLoan,
+  syncLoansStatus,
 } from '../controllers/loanController';
 
 const router = express.Router();
 
+router.all('/sync', syncLoansStatus);
 router.get('/my', verifyToken, getMyLoans);
 router.post('/request', optionalVerifyToken, requestLoan);
 router.post('/extension', verifyToken, requestExtension);

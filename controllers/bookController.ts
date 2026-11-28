@@ -5,20 +5,37 @@ import {
   createBook as createBookModel,
   updateBook as updateBookModel,
   deleteBook as deleteBookModel,
+  syncBookAvailabilityModel,
 } from '../models/bookModel';
 
-const normalizeBook = (b: any) => ({
-  ...b,
-  cover_image: b.cover_image || b.image || '',
-  image: b.cover_image || b.image || '',
-  imageUrl: b.cover_image || b.image || '',
-  digital_url: b.digital_url !== undefined && b.digital_url !== null ? b.digital_url : (b.digitalUrl || ''),
-  digitalUrl: b.digital_url !== undefined && b.digital_url !== null ? b.digital_url : (b.digitalUrl || ''),
-});
+const normalizeBook = (b: any) => {
+  const rawStatus = (b.status || '').trim();
+  const isAvailable =
+    !rawStatus ||
+    rawStatus.toUpperCase() === 'TERSEDIA' ||
+    rawStatus.toLowerCase().includes('tersedia');
+  const status = isAvailable ? 'TERSEDIA' : 'DIPINJAM';
+
+  return {
+    ...b,
+    status,
+    is_available: isAvailable,
+    isAvailable: isAvailable,
+    cover_image: b.cover_image || b.image || '',
+    image: b.cover_image || b.image || '',
+    imageUrl: b.cover_image || b.image || '',
+    coverImage: b.cover_image || b.image || '',
+    digital_url: b.digital_url !== undefined && b.digital_url !== null ? b.digital_url : (b.digitalUrl || ''),
+    digitalUrl: b.digital_url !== undefined && b.digital_url !== null ? b.digital_url : (b.digitalUrl || ''),
+  };
+};
 
 // GET /api/books — Ambil semua koleksi buku
 export const getAllBooks = async (req: Request, res: Response) => {
   try {
+    // Sinkronisasi ketersediaan status buku dengan transaksi peminjaman aktif
+    await syncBookAvailabilityModel().catch(() => null);
+
     const { category, search } = req.query as { category?: string; search?: string };
     let query = 'SELECT * FROM books';
     const params: any[] = [];
@@ -75,8 +92,12 @@ export const createBook = async (req: Request, res: Response) => {
     const bookAuthor = author || 'Penulis Anonim';
     const bookCategory = category || 'Sastra';
     const bookRack = rack_location || shelfLocation || 'RAK 1A';
-    const bookStatus = status || 'Tersedia';
-    const bookBorrower = borrower || '-';
+
+    // Default status buku baru adalah TERSEDIA (bukan DIPINJAM)
+    const isExplicitDipinjam = status && (status.toUpperCase() === 'DIPINJAM' || status.toLowerCase().includes('pinjam'));
+    const bookStatus = isExplicitDipinjam ? 'DIPINJAM' : 'TERSEDIA';
+    const bookBorrower = isExplicitDipinjam ? (borrower || 'Anggota Pustaka') : (borrower && borrower !== '-' ? borrower : '-');
+
     const bookCover = cover_image || coverImage || image || imageUrl || '';
     const bookSynopsis = synopsis || '';
     const bookYear = year || '2024';
@@ -125,14 +146,29 @@ export const updateBook = async (req: Request, res: Response) => {
     const coverValue = cover_image !== undefined ? cover_image : (coverImage !== undefined ? coverImage : (image !== undefined ? image : (imageUrl !== undefined ? imageUrl : current.cover_image)));
     const digitalUrlValue = digital_url !== undefined ? digital_url : (digitalUrl !== undefined ? digitalUrl : current.digital_url);
 
+    let nextStatus = current.status;
+    let nextBorrower = current.borrower;
+
+    if (status !== undefined) {
+      const isAvailable = (status || '').toUpperCase() === 'TERSEDIA' || (status || '').toLowerCase().includes('tersedia');
+      nextStatus = isAvailable ? 'TERSEDIA' : 'DIPINJAM';
+      if (isAvailable && borrower === undefined) {
+        nextBorrower = '-';
+      }
+    }
+
+    if (borrower !== undefined) {
+      nextBorrower = borrower;
+    }
+
     await updateBookModel(
       code !== undefined ? code : current.code,
       title !== undefined ? title : current.title,
       author !== undefined ? author : current.author,
       category !== undefined ? category : current.category,
       (rack_location || shelfLocation) !== undefined ? (rack_location || shelfLocation) : current.rack_location,
-      status !== undefined ? status : current.status,
-      borrower !== undefined ? borrower : current.borrower,
+      nextStatus,
+      nextBorrower,
       coverValue,
       synopsis !== undefined ? synopsis : current.synopsis,
       year !== undefined ? year : current.year,

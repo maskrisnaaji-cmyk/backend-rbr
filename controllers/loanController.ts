@@ -11,8 +11,11 @@ import {
   returnLoan,
   approveExtension,
   rejectExtension,
+  findActiveLoanByBook,
+  approveLoanRequest,
+  rejectLoanRequest,
 } from '../models/loanModel';
-import { updateBookStatus } from '../models/bookModel';
+import { updateBookStatus, getBookByCodeOrTitle, syncBookAvailabilityModel } from '../models/bookModel';
 import { createUserNotification } from '../models/notificationModel';
 import { AuthRequest, extractUserId } from '../middleware/authMiddleware';
 
@@ -25,6 +28,7 @@ const mapLoan = (loan: any) => ({
 export const getMyLoans = async (req: Request, res: Response) => {
   try {
     await syncOverdueStatus();
+    await syncBookAvailabilityModel().catch(() => null);
     const user = (req as any).user;
     const rows = await getLoansByMember(user.id, user.email);
     res.json(rows.map(mapLoan));
@@ -119,6 +123,27 @@ export const requestLoan = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Kode buku dan judul buku wajib diisi.' });
     }
 
+    // 1. Validasi ketersediaan buku di tabel books
+    const bookRows = await getBookByCodeOrTitle(bookCode, title);
+    const targetBook = bookRows && bookRows.length > 0 ? bookRows[0] : null;
+
+    if (targetBook) {
+      const currentStatus = (targetBook.status || '').trim().toUpperCase();
+      if (currentStatus === 'DIPINJAM' || currentStatus === 'DISEWAKAN' || currentStatus.includes('PINJAM')) {
+        return res.status(400).json({
+          message: `Buku '${targetBook.title || title}' saat ini sedang DIPINJAM dan tidak tersedia untuk dipinjam ganda.`,
+        });
+      }
+    }
+
+    // 2. Validasi transaksi aktif di book_loans untuk mencegah peminjaman ganda
+    const activeLoans = await findActiveLoanByBook(bookCode, title);
+    if (activeLoans && activeLoans.length > 0) {
+      return res.status(400).json({
+        message: `Buku '${title}' sedang dalam transaksi peminjaman aktif dan tidak dapat dipinjam ganda.`,
+      });
+    }
+
     const userId = extractUserId(req as AuthRequest);
     const name = memberName || user?.name || 'Anggota Pustaka';
     const email = memberEmail || user?.email || 'anggota@rumahbudayaratna.id';
@@ -128,8 +153,8 @@ export const requestLoan = async (req: Request, res: Response) => {
     const created = await createLoan(
       bookCode,
       title,
-      author || null,
-      rackLocation || null,
+      author || targetBook?.author || null,
+      rackLocation || targetBook?.rack_location || null,
       userId,
       name,
       email,
@@ -137,9 +162,9 @@ export const requestLoan = async (req: Request, res: Response) => {
       due
     );
 
-    // Perbarui status ketersediaan buku di tabel books menjadi DIPINJAM
+    // Perbarui status ketersediaan buku di tabel books menjadi DIPINJAM dan catat nama peminjam
     try {
-      await updateBookStatus('DIPINJAM', bookCode, title);
+      await updateBookStatus('DIPINJAM', bookCode, title, name);
     } catch (updateErr: any) {
       console.warn('[requestLoan] Gagal update status buku:', updateErr.message);
     }
@@ -150,7 +175,7 @@ export const requestLoan = async (req: Request, res: Response) => {
         userId,
         orderId: `LOAN-${created.insertId}`,
         title: 'Peminjaman Buku Berhasil',
-        message: `Buku '${title}' berhasil dipinjam.`,
+        message: `Buku '${title}' berhasil diajukan untuk dipinjam.`,
         type: 'book',
         orderStatus: 'Dipinjam',
         email,
@@ -172,6 +197,7 @@ export const requestLoan = async (req: Request, res: Response) => {
 export const getAllLoans = async (_req: Request, res: Response) => {
   try {
     await syncOverdueStatus();
+    await syncBookAvailabilityModel().catch(() => null);
     const rows = await getAllLoansModel();
     res.json(rows.map(mapLoan));
   } catch (err) {
@@ -188,18 +214,53 @@ export const updateLoan = async (req: Request, res: Response) => {
     if (!loan) return res.status(404).json({ message: 'Peminjaman tidak ditemukan.' });
 
     if (action === 'return') {
+      // 1. Pengembalian Buku: Ubah status loan menjadi returned dan kembalikan status buku ke TERSEDIA
       await returnLoan(loan.id);
       try {
-        await updateBookStatus('TERSEDIA', loan.book_code, loan.title);
+        await updateBookStatus('TERSEDIA', loan.book_code, loan.title, '-');
       } catch (_) {}
       try {
         await createUserNotification({
-          userId: loan.user_id || null,
+          userId: loan.member_id || null,
           orderId: `LOAN-${loan.id}`,
           title: 'Buku Telah Dikembalikan',
           message: `Buku '${loan.title}' sudah dikembalikan. Terima kasih!`,
           type: 'book',
           orderStatus: 'Dikembalikan',
+          email: loan.member_email || null,
+        });
+      } catch (_) {}
+    } else if (action === 'reject_request' || action === 'reject' || action === 'cancel' || action === 'batal') {
+      // 2. Penolakan / Pembatalan Peminjaman: Ubah status loan menjadi rejected dan kembalikan status buku ke TERSEDIA
+      await rejectLoanRequest(loan.id);
+      try {
+        await updateBookStatus('TERSEDIA', loan.book_code, loan.title, '-');
+      } catch (_) {}
+      try {
+        await createUserNotification({
+          userId: loan.member_id || null,
+          orderId: `LOAN-${loan.id}`,
+          title: 'Peminjaman Ditolak / Dibatalkan',
+          message: `Pengajuan peminjaman untuk buku '${loan.title}' ditolak / dibatalkan.`,
+          type: 'book',
+          orderStatus: 'Ditolak',
+          email: loan.member_email || null,
+        });
+      } catch (_) {}
+    } else if (action === 'approve_request') {
+      // 3. Persetujuan Peminjaman oleh Admin
+      await approveLoanRequest(loan.id);
+      try {
+        await updateBookStatus('DIPINJAM', loan.book_code, loan.title, loan.member_name || 'Anggota Pustaka');
+      } catch (_) {}
+      try {
+        await createUserNotification({
+          userId: loan.member_id || null,
+          orderId: `LOAN-${loan.id}`,
+          title: 'Peminjaman Disetujui',
+          message: `Pengajuan peminjaman buku '${loan.title}' telah disetujui.`,
+          type: 'book',
+          orderStatus: 'Disetujui',
           email: loan.member_email || null,
         });
       } catch (_) {}
@@ -219,5 +280,16 @@ export const updateLoan = async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[updateLoan]', err);
     res.status(500).json({ message: 'Gagal memperbarui status peminjaman.' });
+  }
+};
+
+export const syncLoansStatus = async (_req: Request, res: Response) => {
+  try {
+    await syncOverdueStatus();
+    await syncBookAvailabilityModel();
+    res.json({ message: 'Sinkronisasi status peminjaman dan ketersediaan buku berhasil.' });
+  } catch (err) {
+    console.error('[syncLoansStatus]', err);
+    res.status(500).json({ message: 'Gagal melakukan sinkronisasi status peminjaman.' });
   }
 };

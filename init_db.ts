@@ -181,6 +181,30 @@ async function initDb() {
     "UPDATE events SET status = 'Tiket Penuh' WHERE quota > 0 AND (booked_count >= quota OR sold >= quota)"
   );
 
+  // ─── TABEL 4B: EVENT_PRESALE_TIERS (Tier Kuota & Harga Presale 1, Presale 2, Reguler) ─
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS event_presale_tiers (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_id INT NOT NULL,
+      tier_name VARCHAR(100) NOT NULL,
+      tier_order INT NOT NULL DEFAULT 1,
+      price INT NOT NULL DEFAULT 0,
+      quota INT NOT NULL DEFAULT 50,
+      sold INT NOT NULL DEFAULT 0,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_event_id (event_id),
+      INDEX idx_tier_order (event_id, tier_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  await ensureColumn(connection, 'event_presale_tiers', 'tier_name', 'VARCHAR(100) NOT NULL');
+  await ensureColumn(connection, 'event_presale_tiers', 'tier_order', 'INT NOT NULL DEFAULT 1');
+  await ensureColumn(connection, 'event_presale_tiers', 'price', 'INT NOT NULL DEFAULT 0');
+  await ensureColumn(connection, 'event_presale_tiers', 'quota', 'INT NOT NULL DEFAULT 50');
+  await ensureColumn(connection, 'event_presale_tiers', 'sold', 'INT NOT NULL DEFAULT 0');
+  await ensureColumn(connection, 'event_presale_tiers', 'is_active', 'TINYINT(1) NOT NULL DEFAULT 1');
+
   // ─── TABEL 5: TICKET_TRANSACTIONS (Transaksi Pemesanan Tiket) ────────────────
   await connection.query(`
     CREATE TABLE IF NOT EXISTS ticket_transactions (
@@ -204,6 +228,8 @@ async function initDb() {
   await ensureColumn(connection, 'ticket_transactions', 'snap_token', 'VARCHAR(255) NULL');
   await ensureColumn(connection, 'ticket_transactions', 'redirect_url', 'VARCHAR(500) NULL');
   await ensureColumn(connection, 'ticket_transactions', 'payment_method', 'VARCHAR(50) NULL');
+  await ensureColumn(connection, 'ticket_transactions', 'tier_id', 'INT NULL');
+  await ensureColumn(connection, 'ticket_transactions', 'tier_name', 'VARCHAR(50) NULL');
 
   // ─── TABEL 6: TRANSACTIONS (Transaksi Gateway Midtrans Kedai & Tiket) ─────────
   await connection.query(`
@@ -451,6 +477,55 @@ async function initDb() {
       ('Malam Akustik & Puisi Nusantara', '2026-10-12', '19:00 WIB', 'Pendopo Utama', 30000, 50, 18, 18, 'Tiket Tersedia', '/oktober_12_malam_akustik.jpg', '/oktober_12_malam_akustik.jpg', 'Pertunjukan'),
       ('Sabtu Budaya: Gotong Royong Seni', '2026-10-13', '10:00 WIB', 'Taman Budaya', 0, 50, 25, 25, 'Tiket Tersedia', '/oktober_13_sabtu_budaya.jpg', '/oktober_13_sabtu_budaya.jpg', 'Komunitas')
     `);
+  }
+
+  // ─── SINKRONISASI TIER PRESALE (Presale 1, Presale 2, Reguler) UNTUK SEMUA EVENT ──
+  try {
+    console.log('🔄 Memeriksa dan menginisialisasi 3 tier tiket (Presale 1, Presale 2, Reguler) untuk setiap event...');
+    const [allEvents]: any = await connection.query('SELECT id, title, price, quota, sold, booked_count FROM events');
+    for (const ev of allEvents) {
+      const [tiers]: any = await connection.query(
+        'SELECT id FROM event_presale_tiers WHERE event_id = ?',
+        [ev.id]
+      );
+      if (!tiers || tiers.length === 0) {
+        const basePrice = Number(ev.price) || 0;
+        const totalQuota = Math.max(10, Number(ev.quota) || 50);
+        const booked = Number(ev.booked_count ?? ev.sold ?? 0);
+
+        // Alokasi kuota berjenjang Presale 1 (25%), Presale 2 (35%), Reguler (sisa)
+        const quotaP1 = Math.max(5, Math.floor(totalQuota * 0.25));
+        const quotaP2 = Math.max(5, Math.floor(totalQuota * 0.35));
+        const quotaReg = Math.max(1, totalQuota - quotaP1 - quotaP2);
+
+        // Alokasi harga berjenjang (Presale 1 diskon 30%, Presale 2 diskon 15%, Reguler normal)
+        const priceP1 = Math.round(basePrice * 0.7);
+        const priceP2 = Math.round(basePrice * 0.85);
+        const priceReg = basePrice;
+
+        // Distribusi sold yang sudah terjadi sebelumnya secara berurutan
+        const soldP1 = Math.min(quotaP1, booked);
+        const remainingAfterP1 = Math.max(0, booked - quotaP1);
+        const soldP2 = Math.min(quotaP2, remainingAfterP1);
+        const soldReg = Math.min(quotaReg, Math.max(0, remainingAfterP1 - quotaP2));
+
+        await connection.query(
+          `INSERT INTO event_presale_tiers (event_id, tier_name, tier_order, price, quota, sold, is_active)
+           VALUES 
+           (?, 'Presale 1', 1, ?, ?, ?, 1),
+           (?, 'Presale 2', 2, ?, ?, ?, 1),
+           (?, 'Reguler', 3, ?, ?, ?, 1)`,
+          [
+            ev.id, priceP1, quotaP1, soldP1,
+            ev.id, priceP2, quotaP2, soldP2,
+            ev.id, priceReg, quotaReg, soldReg,
+          ]
+        );
+      }
+    }
+    console.log('✅ Inisialisasi 3 tier tiket (Presale 1, Presale 2, Reguler) selesai.');
+  } catch (tierErr: any) {
+    console.warn('⚠️ Catatan inisialisasi tier presale:', tierErr.message);
   }
 
   const [bookCount]: any = await connection.query('SELECT COUNT(*) as count FROM books');

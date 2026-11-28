@@ -12,6 +12,16 @@ import {
   updateEventBooking,
   deleteEvent as deleteEventModel,
 } from '../models/eventModel';
+import {
+  getEventTiersWithActive,
+  lockAndGetActiveTier,
+  refundTierQuota,
+  ensureDefaultTiers,
+} from '../models/presaleModel';
+import {
+  getTicketTransactionByOrderId,
+  updateTicketTransactionStatus,
+} from '../models/transactionModel';
 
 // ─── Helper: pastikan inisialisasi tabel ditangani di init_db.ts ───────────────
 async function ensureBookedCountColumn() {
@@ -128,15 +138,15 @@ export const getAllEvents = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/events/:id – Ambil satu event
+// GET /api/events/:id – Ambil satu event (termasuk info active_tier, harga aktif, dan sisa kuota aktif)
 export const getEventById = async (req: Request, res: Response) => {
   try {
     await ensureBookedCountColumn();
 
-    const { id } = req.params;
+    const id = String(req.params.id);
     let rows: any[];
     const selectQuery =
-      'SELECT id, title, date, time, location, price, quota, sold, booked_count, status, image, banner_image, category FROM events WHERE id = ?';
+      'SELECT id, title, date, time, location, price, quota, sold, booked_count, status, image, banner_image, category, organizer_name, organizer_contact, organizer_email, description, status_approval FROM events WHERE id = ?';
 
     try {
       const [r] = await pool.execute(selectQuery, [id]);
@@ -149,7 +159,9 @@ export const getEventById = async (req: Request, res: Response) => {
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Event tidak ditemukan.' });
     }
-    res.json(formatEventRow(rows[0]));
+    const formatted = formatEventRow(rows[0]);
+    const enriched = await enrichEventWithPresaleInfo(formatted);
+    res.json(enriched);
   } catch (err) {
     console.error('[getEventById]', err);
     res.status(500).json({ message: 'Gagal mengambil detail event.' });
@@ -200,12 +212,50 @@ export const createEvent = async (req: Request, res: Response) => {
       category || 'Budaya'
     );
 
-    const createdRows = await getEventByIdModel(result.insertId);
+    const newEventId = result.insertId;
+
+    // Otomatis buat atau sesuaikan 3 tier (Presale 1, Presale 2, Reguler)
+    const {
+      presale_tiers,
+      presale1_quota, presale1_price,
+      presale2_quota, presale2_price,
+      reguler_quota, reguler_price,
+    } = req.body;
+
+    if (Array.isArray(presale_tiers) && presale_tiers.length > 0) {
+      for (const t of presale_tiers) {
+        await pool.query(
+          `INSERT INTO event_presale_tiers (event_id, tier_name, tier_order, price, quota, sold, is_active)
+           VALUES (?, ?, ?, ?, ?, 0, ?)`,
+          [newEventId, t.tier_name || 'Presale', Number(t.tier_order) || 1, Number(t.price) || 0, Number(t.quota) || 10, t.is_active !== false ? 1 : 0]
+        );
+      }
+    } else if (presale1_quota !== undefined || presale2_quota !== undefined || reguler_quota !== undefined) {
+      const p1Quota = Number(presale1_quota) || Math.floor(quotaVal * 0.25);
+      const p1Price = presale1_price !== undefined ? Number(presale1_price) : Math.round(Number(price || 0) * 0.7);
+      const p2Quota = Number(presale2_quota) || Math.floor(quotaVal * 0.35);
+      const p2Price = presale2_price !== undefined ? Number(presale2_price) : Math.round(Number(price || 0) * 0.85);
+      const regQuota = Number(reguler_quota) || Math.max(1, quotaVal - p1Quota - p2Quota);
+      const regPrice = reguler_price !== undefined ? Number(reguler_price) : Number(price || 0);
+
+      await pool.query(
+        `INSERT INTO event_presale_tiers (event_id, tier_name, tier_order, price, quota, sold, is_active)
+         VALUES 
+         (?, 'Presale 1', 1, ?, ?, 0, 1),
+         (?, 'Presale 2', 2, ?, ?, 0, 1),
+         (?, 'Reguler', 3, ?, ?, 0, 1)`,
+        [newEventId, p1Price, p1Quota, newEventId, p2Price, p2Quota, newEventId, regPrice, regQuota]
+      );
+    } else {
+      await ensureDefaultTiers(pool, newEventId, price !== undefined ? Number(price) : 0, quotaVal, bookedVal);
+    }
+
+    const createdRows = await getEventByIdModel(newEventId);
     const userId = extractUserId(req as AuthRequest);
     try {
       await createUserNotification({
         userId,
-        orderId: `WORKSHOP-${result.insertId}`,
+        orderId: `WORKSHOP-${newEventId}`,
         title: 'Pengajuan Lokakarya Terkirim',
         message: `Pengajuan lokakarya '${title}' berhasil dikirim.`,
         type: 'workshop',
@@ -215,9 +265,12 @@ export const createEvent = async (req: Request, res: Response) => {
       });
     } catch (_) {}
 
+    const formatted = createdRows[0] ? formatEventRow(createdRows[0]) : null;
+    const enriched = formatted ? await enrichEventWithPresaleInfo(formatted) : null;
+
     res.status(201).json({
       message: 'Event berhasil ditambahkan.',
-      data: createdRows[0] ? formatEventRow(createdRows[0]) : null,
+      data: enriched,
     });
   } catch (err) {
     console.error('[createEvent]', err);
@@ -230,7 +283,7 @@ export const updateEvent = async (req: Request, res: Response) => {
   try {
     await ensureBookedCountColumn();
 
-    const { id } = req.params;
+    const id = String(req.params.id);
     const {
       title, tittle,
       date, time, location,
@@ -286,9 +339,11 @@ export const updateEvent = async (req: Request, res: Response) => {
     );
 
     const updatedRows = await getEventByIdModel(id);
+    const formatted = updatedRows[0] ? formatEventRow(updatedRows[0]) : null;
+    const enriched = formatted ? await enrichEventWithPresaleInfo(formatted) : null;
     res.json({
       message: 'Event berhasil diperbarui.',
-      data: updatedRows[0] ? formatEventRow(updatedRows[0]) : null,
+      data: enriched,
     });
   } catch (err) {
     console.error('[updateEvent]', err);
@@ -301,7 +356,7 @@ export const patchEventStatus = async (req: Request, res: Response) => {
   try {
     await ensureBookedCountColumn();
 
-    const { id } = req.params;
+    const id = String(req.params.id);
     const { status } = req.body;
 
     const existing = await getEventByIdModel(id);
@@ -329,13 +384,13 @@ export const patchEventStatus = async (req: Request, res: Response) => {
   }
 };
 
-// POST /api/events/:id/book – Pemesanan tiket (tambah booked_count)
-// Dipanggil saat tiket dibeli & lunas, atau bisa dipanggil dari mobile saat checkout
+// POST /api/events/:id/book – Pemesanan tiket dengan penentuan tier otomatis berurutan
+// Validasi: mengunci harga & tier aktif (Presale 1 -> Presale 2 -> Reguler), memotong kuota tier
 export const bookEvent = async (req: Request, res: Response) => {
   await ensureBookedCountColumn();
   const conn = await pool.getConnection();
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
     const {
       quantity = 1,
       customer_name,
@@ -348,90 +403,152 @@ export const bookEvent = async (req: Request, res: Response) => {
 
     await conn.beginTransaction();
 
-    // Lock row untuk mencegah race condition
-    const [rows]: any = await conn.execute(
-      'SELECT id, title, quota, booked_count, sold, status FROM events WHERE id = ? FOR UPDATE',
-      [id]
-    );
-    if (!rows || rows.length === 0) {
-      await conn.rollback();
-      return res.status(404).json({ message: 'Event tidak ditemukan.' });
-    }
+    // 1. Kunci & dapatkan tier aktif saat ini secara berurutan
+    const tierResult = await lockAndGetActiveTier(conn, id);
 
-    const ev = rows[0];
-    const quota = Number(ev.quota) || 0;
-    const currentBooked = Number(ev.booked_count ?? ev.sold ?? 0);
-
-    // Cek ketersediaan (quota 0 = gratis/unlimited)
-    if (quota > 0 && currentBooked + qty > quota) {
+    if (tierResult.allSoldOut || !tierResult.activeTier) {
       await conn.rollback();
-      const remaining = Math.max(0, quota - currentBooked);
       return res.status(400).json({
-        message: `Tiket tidak mencukupi. Sisa tiket: ${remaining}, diminta: ${qty}.`,
-        remaining_tickets: remaining,
+        message: 'Semua tiket presale dan reguler untuk acara ini sudah habis (Sold Out).',
+        all_soldout: true,
       });
     }
 
-    const newBooked = currentBooked + qty;
-    const newStatus = quota > 0 && newBooked >= quota ? 'Tiket Penuh' : 'Tiket Tersedia';
+    const activeTier = tierResult.activeTier;
 
-    // Update booked_count, sold, dan status
+    // 2. Validasi jumlah beli terhadap sisa kuota tier yang sedang aktif
+    if (qty > activeTier.remaining) {
+      await conn.rollback();
+      return res.status(400).json({
+        message: `Jumlah tiket yang dipesan (${qty}) melebihi sisa kuota tier aktif "${activeTier.tier_name}" (sisa: ${activeTier.remaining}).`,
+        remaining_tickets: activeTier.remaining,
+        active_tier: activeTier.tier_name,
+        all_soldout: false,
+      });
+    }
+
+    // 3. Kunci harga tiket dari tier aktif (bukan dari payload user)
+    const lockedUnitPrice = activeTier.price;
+    const lockedTotalAmount = lockedUnitPrice * qty;
+
+    // 4. Potong kuota tier terkait
     await conn.execute(
-      'UPDATE events SET booked_count = ?, sold = ?, status = ? WHERE id = ?',
-      [newBooked, newBooked, newStatus, id]
+      'UPDATE event_presale_tiers SET sold = sold + ? WHERE id = ?',
+      [qty, activeTier.id]
     );
 
-    // Catat ke ticket_transactions jika ada data transaksi
-    let transactionId = null;
-    if (customer_name || customer_email || order_id) {
-      const [ttResult]: any = await conn.execute(
-        `INSERT INTO ticket_transactions
-          (event_id, customer_name, customer_email, quantity, amount, order_id, payment_method, status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          customer_name || '',
-          customer_email || '',
-          qty,
-          0, // gross_amount akan diupdate dari payment flow
-          order_id || null,
-          payment_method || null,
-          'Lunas',
-        ]
+    // 5. Update kuota event total
+    const [evRows]: any = await conn.execute(
+      'SELECT quota, booked_count, sold, title FROM events WHERE id = ? FOR UPDATE',
+      [id]
+    );
+    let newBooked = qty;
+    let newStatus = 'Tiket Tersedia';
+    let evTitle = 'Event';
+    if (evRows && evRows.length > 0) {
+      evTitle = evRows[0].title || 'Event';
+      const evQuota = Number(evRows[0].quota) || 0;
+      newBooked = Number(evRows[0].booked_count ?? evRows[0].sold ?? 0) + qty;
+      newStatus = evQuota > 0 && newBooked >= evQuota ? 'Tiket Penuh' : 'Tiket Tersedia';
+      await conn.execute(
+        'UPDATE events SET booked_count = ?, sold = ?, status = ? WHERE id = ?',
+        [newBooked, newBooked, newStatus, id]
       );
-      transactionId = ttResult.insertId;
     }
+
+    // 6. Catat ke ticket_transactions dengan mengunci tier_id & tier_name
+    let transactionId = null;
+    const cleanOrderId = order_id || `RBR-EVT-${Date.now()}`;
+    const [ttResult]: any = await conn.execute(
+      `INSERT INTO ticket_transactions
+        (event_id, customer_name, customer_email, quantity, amount, order_id, payment_method, status, tier_id, tier_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        customer_name || '',
+        customer_email || '',
+        qty,
+        lockedTotalAmount,
+        cleanOrderId,
+        payment_method || 'Kasir',
+        payment_method === 'Midtrans' ? 'Menunggu Pembayaran' : 'Lunas',
+        activeTier.id,
+        activeTier.tier_name,
+      ]
+    );
+    transactionId = ttResult.insertId;
 
     await conn.commit();
 
-    // Ambil data event terbaru untuk response
-    const [updated]: any = await conn.execute(
-      'SELECT id, title, date, time, location, price, quota, sold, booked_count, status, image, banner_image, category FROM events WHERE id = ?',
-      [id]
-    );
+    // 7. Ambil data event terbaru yang sudah diperkaya dengan info presale
+    const [updated]: any = await pool.execute('SELECT * FROM events WHERE id = ?', [id]);
+    const formatted = formatEventRow(updated[0]);
+    const enriched = await enrichEventWithPresaleInfo(formatted);
 
     res.status(200).json({
-      message: `Berhasil memesan ${qty} tiket untuk "${ev.title || 'event ini'}".`,
+      message: `Berhasil memesan ${qty} tiket (${activeTier.tier_name}) untuk "${evTitle}".`,
       booked_count: newBooked,
-      remaining_tickets: Math.max(0, quota - newBooked),
+      remaining_tickets: Math.max(0, activeTier.remaining - qty),
+      active_tier: {
+        id: activeTier.id,
+        tier_name: activeTier.tier_name,
+        price: lockedUnitPrice,
+        remaining: Math.max(0, activeTier.remaining - qty),
+      },
       status: newStatus,
       is_available: newStatus !== 'Tiket Penuh',
       transaction_id: transactionId,
-      event: updated[0] ? formatEventRow(updated[0]) : null,
+      order_id: cleanOrderId,
+      amount: lockedTotalAmount,
+      event: enriched,
     });
-  } catch (err) {
+  } catch (err: any) {
     await conn.rollback();
     console.error('[bookEvent]', err);
-    res.status(500).json({ message: 'Gagal memesan tiket.' });
+    res.status(500).json({ message: 'Gagal memesan tiket: ' + (err.message || 'Server error.') });
   } finally {
     conn.release();
+  }
+};
+
+// POST /api/events/tickets/:orderId/cancel – Batalkan pemesanan tiket & kembalikan kuota tier
+export const cancelEventTicket = async (req: Request, res: Response) => {
+  try {
+    const orderId = String(req.params.orderId);
+    const rows = await getTicketTransactionByOrderId(orderId);
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: 'Transaksi tiket tidak ditemukan.' });
+    }
+
+    const ticket = rows[0];
+    if (ticket.status === 'Batal' || ticket.status === 'Gagal') {
+      return res.json({ message: 'Transaksi tiket sudah dibatalkan sebelumnya.', ticket });
+    }
+
+    const qty = Math.max(1, Number(ticket.quantity) || 1);
+    if (ticket.event_id) {
+      await refundTierQuota(pool, ticket.tier_id ?? null, ticket.event_id, qty);
+    }
+
+    await updateTicketTransactionStatus('Batal', orderId);
+
+    return res.json({
+      message: `Pemesanan tiket ${orderId} berhasil dibatalkan dan kuota telah dikembalikan.`,
+      order_id: orderId,
+      tier_name: ticket.tier_name,
+      refunded_quantity: qty,
+    });
+  } catch (err: any) {
+    console.error('[cancelEventTicket]', err);
+    res.status(500).json({ message: 'Gagal membatalkan tiket.' });
   }
 };
 
 // DELETE /api/events/:id – Hapus event
 export const deleteEvent = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
     const result = await deleteEventModel(id);
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Event tidak ditemukan.' });
@@ -444,39 +561,40 @@ export const deleteEvent = async (req: Request, res: Response) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: enrichEventWithPresaleInfo — tambah info presale ke row event
+// Helper: enrichEventWithPresaleInfo — tambah info presale tier aktif ke row event
 // ─────────────────────────────────────────────────────────────────────────────
-async function enrichEventWithPresaleInfo(event: any): Promise<any> {
+export async function enrichEventWithPresaleInfo(event: any): Promise<any> {
   try {
-    const [tiers]: any = await pool.query(
-      `SELECT id, tier_name, tier_order, price, quota, sold, is_active
-       FROM event_presale_tiers
-       WHERE event_id = ?
-       ORDER BY tier_order ASC`,
-      [event.id]
-    );
-
-    if (!tiers || tiers.length === 0) {
-      return { ...event, all_soldout: false, current_tier_name: null, presale_tiers: [] };
-    }
-
-    // Cari tier aktif paling awal yang belum sold out
-    const activeTier = tiers.find((t: any) => t.is_active && t.sold < t.quota);
-    const all_soldout = !activeTier;
-    const current_tier_name = activeTier ? activeTier.tier_name : null;
+    const tierResult = await getEventTiersWithActive(pool, event.id, {
+      defaultPrice: event.price,
+      defaultQuota: event.quota,
+    });
 
     return {
       ...event,
-      all_soldout,
-      current_tier_name,
-      presale_tiers: tiers.map((t: any) => ({
-        ...t,
-        is_soldout: t.sold >= t.quota,
-        is_current_active: activeTier ? t.id === activeTier.id : false,
-      })),
+      price: tierResult.activePrice,
+      remaining_tickets: tierResult.activeRemaining,
+      status: tierResult.allSoldOut ? 'Tiket Penuh' : 'Tiket Tersedia',
+      is_available: !tierResult.allSoldOut,
+      all_soldout: tierResult.allSoldOut,
+      active_tier: tierResult.activeTier,
+      active_price: tierResult.activePrice,
+      active_quota: tierResult.activeQuota,
+      active_remaining: tierResult.activeRemaining,
+      current_tier_name: tierResult.currentTierName,
+      presale_tiers: tierResult.allTiers,
     };
-  } catch {
-    return { ...event, all_soldout: false, current_tier_name: null, presale_tiers: [] };
+  } catch (err: any) {
+    return {
+      ...event,
+      all_soldout: false,
+      active_tier: null,
+      active_price: event.price || 0,
+      active_quota: event.quota || 0,
+      active_remaining: event.remaining_tickets || 0,
+      current_tier_name: null,
+      presale_tiers: [],
+    };
   }
 }
 
@@ -558,7 +676,7 @@ export const createWorkshopProposal = async (req: Request, res: Response) => {
 // ─────────────────────────────────────────────────────────────────────────────
 export const approveEvent = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
 
     const [existing]: any = await pool.execute(
       'SELECT id, title FROM events WHERE id = ?',
@@ -593,7 +711,7 @@ export const approveEvent = async (req: Request, res: Response) => {
 // ─────────────────────────────────────────────────────────────────────────────
 export const rejectEvent = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = String(req.params.id);
     const { reason } = req.body;
 
     const [existing]: any = await pool.execute(

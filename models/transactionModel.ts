@@ -26,6 +26,8 @@ export interface Transaction {
 export interface TicketTransaction {
   id?: number;
   event_id?: number | null;
+  tier_id?: number | null;
+  tier_name?: string | null;
   customer_name?: string | null;
   customer_email?: string | null;
   quantity?: number;
@@ -136,12 +138,14 @@ export const createTicketTransaction = async (
   amount: number,
   status: string,
   orderId: string,
-  paymentMethod: string
+  paymentMethod: string,
+  tierId?: number | null,
+  tierName?: string | null
 ) => {
   const [result] = await pool.execute(
     `INSERT INTO ticket_transactions
-      (event_id, customer_name, customer_email, quantity, amount, status, order_id, payment_method)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (event_id, customer_name, customer_email, quantity, amount, status, order_id, payment_method, tier_id, tier_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       eventId,
       customerName,
@@ -151,6 +155,8 @@ export const createTicketTransaction = async (
       status,
       orderId,
       paymentMethod,
+      tierId || null,
+      tierName || null,
     ]
   );
   return result as any;
@@ -203,7 +209,7 @@ export const updateTicketTransactionStatus = async (ticketStatus: string, orderI
 
 export const getTicketTransactionByOrderId = async (orderId: any) => {
   const [rows] = await pool.execute(
-    'SELECT event_id, quantity FROM ticket_transactions WHERE order_id = ? LIMIT 1',
+    'SELECT id, event_id, quantity, tier_id, tier_name, status, amount, customer_email, customer_name FROM ticket_transactions WHERE order_id = ? LIMIT 1',
     [orderId]
   );
   return rows as TicketTransaction[];

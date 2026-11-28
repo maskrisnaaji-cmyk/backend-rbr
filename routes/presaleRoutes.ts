@@ -6,6 +6,8 @@ import {
   updateTier,
   deleteTier,
   sellTier,
+  refundTier,
+  cancelTicketOrder,
 } from '../controllers/presaleController';
 
 const router = express.Router();
@@ -33,5 +35,13 @@ router.delete('/tiers/:tierId', deleteTier);
 // ── Proses penjualan tiket presale ────────────────────────────────────────
 // POST /api/presale/tiers/:tierId/sell
 router.post('/tiers/:tierId/sell', sellTier);
+
+// ── Kembalikan kuota tier ─────────────────────────────────────────────────
+// POST /api/presale/tiers/:tierId/refund
+router.post('/tiers/:tierId/refund', refundTier);
+
+// ── Batalkan tiket dan kembalikan kuota tier ──────────────────────────────
+// POST /api/presale/tickets/:orderId/cancel
+router.post('/tickets/:orderId/cancel', cancelTicketOrder);
 
 export default router;

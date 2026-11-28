@@ -11,6 +11,7 @@ import {
   createWorkshopProposal,
   approveEvent,
   rejectEvent,
+  cancelEventTicket,
 } from '../controllers/eventController';
 
 const router = express.Router();
@@ -24,7 +25,9 @@ router.get('/:id', getEventById);
 router.post('/', createEvent);
 router.put('/:id', updateEvent);
 router.patch('/:id/status', patchEventStatus);  // Admin: toggle Tiket Tersedia/Penuh
-router.post('/:id/book', bookEvent);            // Mobile: pesan tiket (tambah booked_count)
+router.post('/:id/book', bookEvent);            // Mobile: pesan tiket (kunci tier & potong kuota)
+router.post('/tickets/:orderId/cancel', cancelEventTicket); // Batalkan tiket & kembalikan kuota
+router.post('/:id/cancel', cancelEventTicket);
 router.delete('/:id', deleteEvent);
 
 export default router;
